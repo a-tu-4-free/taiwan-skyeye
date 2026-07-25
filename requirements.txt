@@ -1,0 +1,37 @@
+# Taiwan Defense Bot — 套件清單
+# 安裝指令：pip install -r requirements.txt
+
+# Telegram Bot
+python-telegram-bot==21.6
+
+# 爬蟲
+requests==2.31.0
+beautifulsoup4==4.12.3
+feedparser==6.0.11
+lxml==5.1.0
+websockets>=12.0          # AIS 即時船隻追蹤
+
+# 資料庫
+sqlalchemy==2.0.36
+
+# 排程
+APScheduler==3.10.4
+
+# 資料分析 & 圖表
+pandas==2.2.0
+matplotlib==3.8.3
+numpy==1.26.4
+
+# 地圖
+folium==0.17.0
+
+# Ollama（本地AI）
+ollama==0.3.3
+
+# 環境變數（.env 讀取）
+python-dotenv>=1.0.0
+
+# 工具
+python-dateutil==2.9.0
+pytz==2024.1
+py7zr>=0.20.0             # 壓縮/解壓（選用）

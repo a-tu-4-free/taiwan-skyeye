@@ -1,0 +1,33 @@
+# 環境變數（絕對不能上傳）
+.env
+
+# 資料庫和運行資料
+data/
+logs/
+
+# Python 快取
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 地圖和圖片產出
+data/satellite/
+data/cards/
+data/map_shots/
+*.png
+*.html
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 編輯器
+.vscode/
+.idea/
+*.swp
+
+# 開發用暫存
+scripts/debug/
