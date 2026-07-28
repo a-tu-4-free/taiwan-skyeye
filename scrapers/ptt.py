@@ -8,6 +8,7 @@ import sys
 import os
 import re
 import time
+import random
 import time as t
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -188,7 +189,7 @@ def fetch_ptt_board(board_name, board_url, max_pages=2):
             if prev_link and page < max_pages - 1:
                 prev_href = prev_link.get("href", "")
                 current_url = f"https://www.ptt.cc{prev_href}"
-                time.sleep(1)
+                time.sleep(random.uniform(1.0, 2.0))
             else:
                 break
 
@@ -231,13 +232,17 @@ def run():
     all_results = []
 
     # 主要板：多爬幾頁
-    for board_name, board_url in PTT_BOARDS.items():
+    for i, (board_name, board_url) in enumerate(PTT_BOARDS.items()):
         # 八卦板只爬1頁（量太大）
         max_pages = 1 if board_name == "gossiping" else 2
 
+        # 第一個板也要等，避免被 PTT 偵測為爬蟲
+        import random
+        wait = random.uniform(2.0, 3.5) if i == 0 else random.uniform(1.5, 2.5)
+        time.sleep(wait)
+
         results = fetch_ptt_board(board_name, board_url, max_pages=max_pages)
         all_results.extend(results)
-        time.sleep(1.5)  # 避免對 PTT 造成負擔
 
     # 印出熱門文章
     hot = get_hot_articles(all_results)
