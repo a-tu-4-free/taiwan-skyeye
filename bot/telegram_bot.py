@@ -477,24 +477,57 @@ async def cmd_cable(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def cmd_satellite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/satellite — 今日衛星分析"""
-    from scrapers.satellite import get_latest_analysis
-    results = get_latest_analysis()
+    """/satellite — 今日衛星影像"""
+    import os
+    await update.message.reply_text(
+        _rt(update, "⏳ 取得衛星影像中...", "⏳ 获取卫星影像中...", "⏳ Fetching satellite imagery...")
+    )
+    try:
+        from scrapers.satellite import run as sat_run, CACHE_DIR
+        results = await asyncio.to_thread(sat_run)
+    except Exception as e:
+        await update.message.reply_text(f"❌ 衛星影像取得失敗：{e}")
+        return
 
     if not results:
         await update.message.reply_text(
-            "📡 今日尚無衛星分析資料\n每日 08:00 自動分析，或等待 Gemini API 配額重置"
+            _rt(update,
+                "📡 今日尚無衛星影像\n（每日 08:00 自動取得）",
+                "📡 今日暂无卫星影像\n（每日 08:00 自动获取）",
+                "📡 No satellite imagery today\n(Auto-fetched daily at 08:00)")
         )
         return
 
-    lines = [f"📡 <b>今日衛星影像分析</b>", "─" * 28]
+    sent = 0
     for r in results:
-        title   = r.get("title", "")[:45]
-        content = r.get("content", "")[:300]
-        lines += [f"\n🛰️ <b>{title}</b>", content]
-    lines += ["─" * 28, f"更新：{datetime.now().strftime('%H:%M')}"]
+        area_name = r.get("area", "")
+        img_path  = os.path.join(
+            CACHE_DIR,
+            f"{area_name}_{datetime.now().strftime('%Y%m%d')}.png"
+        )
+        caption = (
+            f"🛰️ <b>衛星影像：{area_name}</b>\n"
+            f"{'─' * 28}\n"
+            f"來源：Google Maps Static API\n"
+            f"時間：{datetime.now().strftime('%Y-%m-%d')}\n"
+            f"<i>（商業衛星圖，解析度有限，僅供參考）</i>"
+        )
+        if os.path.exists(img_path):
+            with open(img_path, "rb") as f:
+                await update.message.reply_photo(
+                    photo=f, caption=caption, parse_mode=ParseMode.HTML
+                )
+            sent += 1
+        else:
+            await update.message.reply_text(f"📡 {area_name} 影像尚未快取，請稍後再試")
 
-    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+    if sent == 0:
+        await update.message.reply_text(
+            _rt(update,
+                "📡 今日影像快取尚未建立，請於 08:00 後再試",
+                "📡 今日影像缓存尚未建立，请于 08:00 后再试",
+                "📡 No cached imagery yet, please try after 08:00")
+        )
 
 
 @restricted
