@@ -488,6 +488,9 @@ def format_project_intro() -> str:
         f"完整說明與資料來源：\n"
         f"🔗 {WEB_BASE_URL}/about\n\n"
         f"{sep}\n"
+        f"💬 {b('如何使用指令？')}\n"
+        f"頻道為單向廣播，無法輸入指令。\n"
+        f"請直接私訊 @taiwandefence_bot，即可使用 /status、/today、/map 等所有查詢功能。\n\n"
         f"輸入 /help 查看所有指令"
     )
 
