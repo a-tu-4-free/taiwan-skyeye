@@ -15,8 +15,7 @@ from telegram.constants import ParseMode
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
-    THREAT_ALERT_THRESHOLD, USE_WHITELIST, ALLOWED_USER_IDS,
-    WEB_BASE_URL
+    THREAT_ALERT_THRESHOLD, USE_WHITELIST, ALLOWED_USER_IDS
 )
 from database.db import (
     get_recent_news, get_intrusion_stats,
@@ -38,7 +37,6 @@ from bot.formatter import (
 )
 from bot.i18n import get_user_lang, set_user_lang, t
 from maps.map_generator import generate_defense_map
-from bot.i18n import get_user_lang, set_user_lang, t, LANG_DISPLAY, SUPPORTED_LANGS
 
 
 # ==============================
@@ -61,6 +59,26 @@ def restricted(func):
 # 指令處理器
 # ==============================
 
+
+def _lang(update) -> str:
+    """取得用戶語言設定"""
+    try:
+        from bot.i18n import get_user_lang
+        return get_user_lang(update.effective_user.id)
+    except Exception:
+        return "zh-TW"
+
+
+def _rt(update, zh_tw: str, zh_cn: str = "", en: str = "") -> str:
+    """依語言回傳對應字串"""
+    lang = _lang(update)
+    if lang == "en" and en:
+        return en
+    if lang == "zh-CN" and zh_cn:
+        return zh_cn
+    return zh_tw
+
+
 @restricted
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start：歡迎訊息＋專案介紹（給新訂閱者）"""
@@ -70,58 +88,84 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        f"🛡️ <b>Taiwan Defense Bot 指令說明</b>\n"
-        f"{'─' * 28}\n"
-        f"/status    — 威脅指數 + 活躍異常\n"
-        f"/today     — 今日完整情勢報告\n"
-        f"/summary   — 三句話快速摘要\n"
-        f"/anomaly   — 異常偵測歷史\n"
-        f"/map       — 態勢地圖（HTML）\n"
-        f"/trend     — 30日威脅趨勢圖\n"
-        f"/cable     — 海底電纜狀態\n"
-        f"/vessel    — 可疑船隻清單\n"
-        f"/satellite — 衛星影像分析\n"
-        f"/history   — 歷史威脅趨勢\n"
-        f"/weekly    — 本週週報\n"
-        f"/refresh   — 手動觸發資料更新\n"
-        f"/lang      — 切換語言 (zh/en)\n"
-        f"{'─' * 28}\n"
-        f"<i>自動推送：20:00 日報 ｜ 週日 21:00 週報 ｜ 即時異常警報</i>"
-    )
+    lang = _lang(update)
+    if lang == "en":
+        msg = (
+            f"🛡️ <b>SkyEye Commands</b>\n"
+            f"{'─' * 28}\n"
+            f"/status    — Threat index + active anomalies\n"
+            f"/today     — Full daily situation report\n"
+            f"/summary   — 3-sentence quick summary\n"
+            f"/anomaly   — Anomaly detection history\n"
+            f"/map       — Situation map (HTML)\n"
+            f"/trend     — 30-day threat trend chart\n"
+            f"/cable     — Submarine cable status\n"
+            f"/vessel    — Suspicious vessel list\n"
+            f"/satellite — Satellite imagery\n"
+            f"/history   — Historical threat trend\n"
+            f"/weekly    — Weekly report\n"
+            f"/refresh   — Manual data refresh\n"
+            f"/lang      — Switch language (zh-TW / zh-CN / en)\n"
+            f"{'─' * 28}\n"
+            f"<i>Auto push: 20:00 daily report | Sun 21:00 weekly | Real-time alerts</i>"
+        )
+    elif lang == "zh-CN":
+        msg = (
+            f"🛡️ <b>SkyEye 指令说明</b>\n"
+            f"{'─' * 28}\n"
+            f"/status    — 威胁指数 + 活跃异常\n"
+            f"/today     — 今日完整态势报告\n"
+            f"/summary   — 三句话快速摘要\n"
+            f"/anomaly   — 异常侦测历史\n"
+            f"/map       — 态势地图（HTML）\n"
+            f"/trend     — 30日威胁趋势图\n"
+            f"/cable     — 海底电缆状态\n"
+            f"/vessel    — 可疑船只清单\n"
+            f"/satellite — 卫星影像\n"
+            f"/history   — 历史威胁趋势\n"
+            f"/weekly    — 本周周报\n"
+            f"/refresh   — 手动触发资料更新\n"
+            f"/lang      — 切换语言 (zh-TW / zh-CN / en)\n"
+            f"{'─' * 28}\n"
+            f"<i>自动推送：20:00 日报 ｜ 周日 21:00 周报 ｜ 即时异常警报</i>"
+        )
+    else:
+        msg = (
+            f"🛡️ <b>SkyEye 指令說明</b>\n"
+            f"{'─' * 28}\n"
+            f"/status    — 威脅指數 + 活躍異常\n"
+            f"/today     — 今日完整情勢報告\n"
+            f"/summary   — 三句話快速摘要\n"
+            f"/anomaly   — 異常偵測歷史\n"
+            f"/map       — 態勢地圖（HTML）\n"
+            f"/trend     — 30日威脅趨勢圖\n"
+            f"/cable     — 海底電纜狀態\n"
+            f"/vessel    — 可疑船隻清單\n"
+            f"/satellite — 衛星影像\n"
+            f"/history   — 歷史威脅趨勢\n"
+            f"/weekly    — 本週週報\n"
+            f"/refresh   — 手動觸發資料更新\n"
+            f"/lang      — 切換語言 (zh-TW / zh-CN / en)\n"
+            f"{'─' * 28}\n"
+            f"<i>自動推送：20:00 日報 ｜ 週日 21:00 週報 ｜ 即時異常警報</i>"
+        )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
 @restricted
 async def cmd_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/lang — 切換語言（繁中/簡中/英文）"""
     user_id = update.effective_user.id
     args    = context.args
-
-    if args and args[0] in SUPPORTED_LANGS:
+    if args and args[0] in ("en", "zh"):
         set_user_lang(user_id, args[0])
-        lang_name = LANG_DISPLAY[args[0]]
-        icons     = {"zh-TW": "🇹🇼", "zh-CN": "🇨🇳", "en": "🇺🇸"}
-        await update.message.reply_text(
-            f"{icons.get(args[0], '✅')} 語言已切換為 {lang_name}",
-            parse_mode=ParseMode.HTML
-        )
+        msg = "✅ Language set to English" if args[0] == "en" else "✅ 語言已切換為繁體中文"
     else:
-        current   = get_user_lang(user_id)
-        lang_list = "\n".join(
-            f"  {'✅' if k == current else '　'} <code>/lang {k}</code> — {v}"
-            for k, v in LANG_DISPLAY.items()
-        )
-        await update.message.reply_text(
-            f"🌐 <b>語言設定</b>\n"
-            f"{'─' * 28}\n"
-            f"目前：{LANG_DISPLAY.get(current, current)}\n\n"
-            f"切換方式：\n{lang_list}\n\n"
-            f"<i>支援：繁體中文(zh-TW) / 简体中文(zh-CN) / English(en)</i>",
-            parse_mode=ParseMode.HTML
-        )
+        current = get_user_lang(user_id)
+        msg = f"目前語言：<code>{current}</code>\n切換：/lang zh 或 /lang en"
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
 
+@restricted
 async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🛡️ 威脅快覽", callback_data="status"),
@@ -136,7 +180,7 @@ async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🔄 手動更新", callback_data="refresh")],
     ]
     await update.message.reply_text(
-        "🛡️ <b>Taiwan Defense Bot 控制面板</b>\n請選擇功能：",
+        "🛡️ <b>SkyEye 控制面板</b>\n請選擇功能：",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -145,11 +189,14 @@ async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/status — 威脅指數 + 活躍異常摘要"""
-    await update.message.reply_text("⏳ 計算中...")
+    await update.message.reply_text(_rt(update, "⏳ 計算中...", "⏳ 计算中...", "⏳ Calculating..."))
 
     scores = get_recent_scores(days=7)
     if not scores:
-        await update.message.reply_text("📭 尚無足夠資料，請等待首次日報生成。")
+        await update.message.reply_text(_rt(update,
+            "📭 尚無足夠資料，請等待首次日報生成。",
+            "📭 尚无足够资料，请等待首次日报生成。",
+            "📭 No data yet. Please wait for the first daily report."))
         return
 
     from analyzer.threat_score import calculate_trend
@@ -322,7 +369,10 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/today — 今日完整報告"""
-    await update.message.reply_text("⏳ 生成今日報告中，請稍候...")
+    await update.message.reply_text(_rt(update,
+        "⏳ 生成今日報告中，請稍候...",
+        "⏳ 生成今日报告中，请稍候...",
+        "⏳ Generating today's report, please wait..."))
 
     threat_data        = run_daily_scoring()
     intrusion_stats, _ = get_intrusion_stats(days=1)
@@ -363,7 +413,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/map — 傳送態勢地圖（HTML 檔案）"""
-    await update.message.reply_text("⏳ 生成地圖中...")
+    await update.message.reply_text(_rt(update, "⏳ 生成地圖中...", "⏳ 生成地图中...", "⏳ Generating map..."))
     try:
         map_path = generate_defense_map()
         with open(map_path, "rb") as f:
@@ -379,7 +429,7 @@ async def cmd_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_trend(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/trend — 威脅趨勢圖表"""
-    await update.message.reply_text("⏳ 生成圖表中...")
+    await update.message.reply_text(_rt(update, "⏳ 生成圖表中...", "⏳ 生成图表中...", "⏳ Generating chart..."))
     try:
         scores   = get_recent_scores(days=1)
         military = scores[-1].military_score if scores else 0
@@ -416,7 +466,7 @@ async def _send_long_message(update: Update, text: str, chunk_size: int = 4000):
 @restricted
 async def cmd_cable(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/cable — 海底電纜狀態（已去重，只顯示每條電纜最新一筆）"""
-    await update.message.reply_text("⏳ 查詢電纜狀態...")
+    await update.message.reply_text(_rt(update, "⏳ 查詢電纜狀態...", "⏳ 查询电缆状态...", "⏳ Checking cable status..."))
     try:
         cables = get_all_cable_status(days=90)
         msg    = format_cable_status(cables)
@@ -427,51 +477,24 @@ async def cmd_cable(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @restricted
 async def cmd_satellite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/satellite — 今日衛星影像（直接傳圖）"""
-    import os
-    from scrapers.satellite import run as sat_run, CACHE_DIR, WATCH_AREAS
-
-    await update.message.reply_text("⏳ 取得衛星影像中...")
-    try:
-        results = await asyncio.to_thread(sat_run)
-    except Exception as e:
-        await update.message.reply_text(f"❌ 衛星影像取得失敗：{e}")
-        return
+    """/satellite — 今日衛星分析"""
+    from scrapers.satellite import get_latest_analysis
+    results = get_latest_analysis()
 
     if not results:
         await update.message.reply_text(
-            "📡 今日尚無衛星影像\n"
-            "（每日 08:00 自動取得，或等候 API 配額重置）"
+            "📡 今日尚無衛星分析資料\n每日 08:00 自動分析，或等待 Gemini API 配額重置"
         )
         return
 
-    sent = 0
+    lines = [f"📡 <b>今日衛星影像分析</b>", "─" * 28]
     for r in results:
-        area_name = r.get("area", "")
-        img_path  = os.path.join(
-            CACHE_DIR,
-            f"{area_name}_{datetime.now().strftime('%Y%m%d')}.png"
-        )
-        caption = (
-            f"🛰️ <b>衛星影像：{area_name}</b>\n"
-            f"{'─' * 28}\n"
-            f"來源：Google Maps Static API\n"
-            f"時間：{datetime.now().strftime('%Y-%m-%d')}\n"
-            f"<i>（影像為商業衛星圖，解析度有限，僅供參考）</i>"
-        )
-        if os.path.exists(img_path):
-            with open(img_path, "rb") as f:
-                await update.message.reply_photo(
-                    photo=f, caption=caption, parse_mode=ParseMode.HTML
-                )
-            sent += 1
-        else:
-            await update.message.reply_text(
-                f"📡 {area_name} 影像尚未快取，請稍後再試"
-            )
+        title   = r.get("title", "")[:45]
+        content = r.get("content", "")[:300]
+        lines += [f"\n🛰️ <b>{title}</b>", content]
+    lines += ["─" * 28, f"更新：{datetime.now().strftime('%H:%M')}"]
 
-    if sent == 0:
-        await update.message.reply_text("📡 今日尚無可用影像快取")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
 @restricted
@@ -503,7 +526,7 @@ async def cmd_vessel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @restricted
 async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/weekly — 週報"""
-    await update.message.reply_text("⏳ 生成週報中...")
+    await update.message.reply_text(_rt(update, "⏳ 生成週報中...", "⏳ 生成周报中...", "⏳ Generating weekly report..."))
 
     stats, _   = get_intrusion_stats(days=7)
     scores     = get_recent_scores(days=7)
