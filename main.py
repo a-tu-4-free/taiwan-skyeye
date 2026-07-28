@@ -49,13 +49,18 @@ def print_system_info():
     print("📡  資料來源")
     print("=" * 55)
     sources = [
-        ("國防部新聞稿",   "https://www.mnd.gov.tw",          "30分鐘",  "擾臺資訊深度解析"),
-        ("海巡署新聞稿",   "https://www.cga.gov.tw",          "30分鐘",  "海警動態/電纜事件"),
-        ("自由時報國際版", "https://news.ltn.com.tw",         "30分鐘",  "台海相關國際新聞"),
-        ("PTT軍武/Military板","https://www.ptt.cc",           "10分鐘",  "即時軍事討論"),
-        ("國台辦",         "http://www.gwytb.gov.tw",         "60分鐘",  "對台措辭分析"),
-        ("AIS船隻追蹤",    "https://aisstream.io",            "2小時",   "台灣周邊可疑船隻"),
-        ("Sentinel-2衛星", "https://dataspace.copernicus.eu","每日08:00","中共基地影像分析"),
+        ("國防部新聞稿",     "https://www.mnd.gov.tw",          "30分鐘",   "共機共艦擾台深度解析"),
+        ("海巡署新聞稿",     "https://www.cga.gov.tw",          "30分鐘",   "海警動態/電纜事件"),
+        ("自由時報/自由亞洲", "https://news.ltn.com.tw",        "30分鐘",   "台海相關國際新聞"),
+        ("PTT軍武/Military", "https://www.ptt.cc",              "30分鐘",   "即時軍事討論"),
+        ("國台辦",           "http://www.gwytb.gov.tw",         "60分鐘",   "對台措辭（台灣DNS封鎖）"),
+        ("USNI/WarZone/BBC", "https://usni.org",                "30分鐘",   "國際軍事媒體"),
+        ("AIS船隻追蹤",      "https://aisstream.io",            "2小時",    "台灣周邊可疑船隻"),
+        ("ADS-B軍機追蹤",    "https://opensky-network.org",     "30分鐘",   "台海周邊軍機動態"),
+        ("中共官媒",         "新華社/人民日報/環球時報",          "2小時",    "對台措辭升溫偵測"),
+        ("MODA海底電纜",     "https://www.moda.gov.tw",         "4小時",    "台灣海底電纜狀態"),
+        ("Google Maps衛星",  "https://maps.googleapis.com",     "每日08:00","重點軍事基地影像"),
+        ("Our World in Data","https://ourworldindata.org",      "每月",     "中國石油消耗指標"),
     ]
     for name, url, interval, note in sources:
         print(f"  {'✅'} {name:<18} [{interval:<8}] {note}")
@@ -65,13 +70,14 @@ def print_system_info():
     print("🤖  分析模組")
     print("=" * 55)
     modules = [
-        ("威脅評分",     "analyzer/threat_score.py",   "每日19:00", "軍事/海事/資安三維評分(0-10)"),
-        ("Ollama AI",   "analyzer/ollama_client.py",  "每60分鐘",  f"本地LLM新聞摘要與研判"),
-        ("Gemini AI",   "scrapers/adsb_monitor.py",   "備援",      "Ollama 失敗時的備援分析"),
-        ("趨勢圖表",    "analyzer/trend.py",          "每日推播",  "30日威脅趨勢/擾臺月統計/雷達圖"),
-        ("態勢地圖",    "maps/map_generator.py",      "06:00/18:00","ADIZ/中線/電纜/船隻互動地圖"),
-        ("擾臺解析",    "scrapers/mnd.py",            "即時",      "機型/數量/越中線/進入方向"),
-        ("措辭分析",    "scrapers/gwytb.py",          "每60分鐘",  "升溫/緩和語氣自動分類"),
+        ("威脅評分",     "analyzer/threat_score.py",    "每日19:00", "軍事/海事/資安三維評分(0-10)"),
+        ("異常偵測",     "analyzer/anomaly_detector.py","每5分鐘",   "8種異常類型自動偵測"),
+        ("Ollama AI",   "analyzer/ollama_client.py",   "每60分鐘",  "本地LLM新聞摘要與研判"),
+        ("Gemini AI",   "scrapers/adsb_monitor.py",    "備援",      "Ollama失敗時的備援分析"),
+        ("趨勢圖表",    "analyzer/trend.py",           "每日推播",  "30日威脅趨勢/擾臺月統計/雷達圖"),
+        ("態勢地圖",    "maps/map_generator.py",       "30分鐘",    "ADIZ/中線/電纜/軍機互動地圖"),
+        ("擾臺解析",    "scrapers/mnd.py",             "即時",      "機型/數量/越中線/進入方向"),
+        ("措辭分析",    "scrapers/china_media.py",     "每2小時",   "中共官媒L1/L2/L3升溫分類"),
     ]
     for name, module, timing, desc in modules:
         print(f"  🔧 {name:<12} {timing:<12} {desc}")
@@ -81,10 +87,13 @@ def print_system_info():
     print("📲  推播設定")
     print("=" * 55)
     pushes = [
-        ("每日20:00", "情勢日報", "威脅指數+AI研判+擾臺統計+重點新聞"),
-        ("每週日21:00", "週報",   "本週統計+趨勢分析+AI週報"),
-        ("即時",       "高威脅警報", "威脅指數≥7自動推送"),
-        ("啟動時",     "初始爬蟲", "MND/CGA/NEWS三源同步"),
+        ("每日08:00",   "晨間概況",  "台海概況+活躍異常+衛星影像"),
+        ("每日20:00",   "情勢日報",  "威脅指數+AI研判+擾臺統計+重點新聞"),
+        ("每週日21:00", "週報",      "本週統計+趨勢分析+AI週報"),
+        ("即時",        "高威脅警報","威脅指數≥7自動推送"),
+        ("即時",        "異常警報",  "偵測到異常時推送（含說明）"),
+        ("即時",        "電纜警報",  "電纜障礙/中斷24小時冷卻推送"),
+        ("即時",        "軍機警報",  "ADS-B偵測到中共/美軍軍機"),
     ]
     for timing, name, desc in pushes:
         print(f"  📣 [{timing:<10}] {name:<8} {desc}")
