@@ -3,6 +3,10 @@
 
 import asyncio
 import os
+import socket
+# feedparser.parse(url) / urllib 沒有 timeout 參數，網路卡住會讓排程永遠掛住
+# （log 中「海底電纜監控 / 完整爬蟲 skipped: maximum number of running instances」即此原因）
+socket.setdefaulttimeout(30)
 os.makedirs(os.path.join(os.path.dirname(__file__), "logs"), exist_ok=True)
 os.makedirs(os.path.join(os.path.dirname(__file__), "data"), exist_ok=True)
 import logging
@@ -59,7 +63,7 @@ def print_system_info():
         ("ADS-B軍機追蹤",    "https://opensky-network.org",     "30分鐘",   "台海周邊軍機動態"),
         ("中共官媒",         "新華社/人民日報/環球時報",          "2小時",    "對台措辭升溫偵測"),
         ("MODA海底電纜",     "https://www.moda.gov.tw",         "4小時",    "台灣海底電纜狀態"),
-        ("Google Maps衛星",  "https://maps.googleapis.com",     "每日08:00","重點軍事基地影像"),
+        ("Google Maps衛星",  "https://maps.googleapis.com",     "每日08:05","重點軍事基地影像"),
         ("Our World in Data","https://ourworldindata.org",      "每月",     "中國石油消耗指標"),
     ]
     for name, url, interval, note in sources:
@@ -73,7 +77,7 @@ def print_system_info():
         ("威脅評分",     "analyzer/threat_score.py",    "每日19:00", "軍事/海事/資安三維評分(0-10)"),
         ("異常偵測",     "analyzer/anomaly_detector.py","每5分鐘",   "8種異常類型自動偵測"),
         ("Ollama AI",   "analyzer/ollama_client.py",   "每60分鐘",  "本地LLM新聞摘要與研判"),
-        ("Gemini AI",   "scrapers/adsb_monitor.py",    "備援",      "Ollama失敗時的備援分析"),
+        ("Gemini AI",   "adsb_monitor / china_media",  "備援",      "Ollama失敗時的備援分析"),
         ("趨勢圖表",    "analyzer/trend.py",           "每日推播",  "30日威脅趨勢/擾臺月統計/雷達圖"),
         ("態勢地圖",    "maps/map_generator.py",       "30分鐘",    "ADIZ/中線/電纜/軍機互動地圖"),
         ("擾臺解析",    "scrapers/mnd.py",             "即時",      "機型/數量/越中線/進入方向"),
@@ -164,8 +168,15 @@ def main():
 
     app = build_app()
 
+    bot_post_init = app.post_init        # build_app() 設定的 set_my_commands，避免被覆蓋
+
     async def post_init(application):
         bot = application.bot
+        if bot_post_init:
+            try:
+                await bot_post_init(application)
+            except Exception as e:
+                print(f"⚠️  指令選單設定失敗（非致命）：{e}")
 
         me = await bot.get_me()
         print(f"✅ Telegram Bot 連線：@{me.username}\n")

@@ -28,7 +28,7 @@
 | 共機/共艦擾台 | 國防部新聞稿 | 30 分鐘 |
 | 軍機追蹤（ADS-B） | OpenSky Network | 30 分鐘 |
 | 海巡動態 | 海巡署新聞稿 | 30 分鐘 |
-| 海底電纜狀態 | 數位部 MODA 公告 | 4 小時 |
+| 海底電纜狀態 | 數位部 MODA 海纜障礙公告 | 4 小時 |
 | AIS 船隻追蹤 | AISStream | 2 小時 |
 | 民船徵用偵測 | AIS（兩棲基地周邊分析）| 2 小時 |
 | 中共官媒輿論 | 新華社/人民日報/環球時報/CGTN | 2 小時 |
@@ -45,9 +45,9 @@
 
 - **威脅評分**：軍事 × 0.5 + 海域 × 0.3 + 資安 × 0.2，0-10 分制
 - **異常偵測**：8 種異常類型，偏離14日均值自動觸發
-- **AI 研判**：Ollama 本地 LLM（gemma3），Gemini Flash 備援
+- **AI 研判**：Ollama 本地 LLM（gemma3，選用），Gemini 2.5 Flash-Lite 備援；皆無時改用規則評分
 - **趨勢圖表**：30日威脅趨勢、擾台月統計、三維雷達圖
-- **態勢地圖**：ADIZ、中線、電纜、船隻、軍機互動地圖
+- **態勢地圖**：ADIZ、中線、電纜（示意路由＋故障點推估）、船隻、軍機互動地圖
 
 ---
 
@@ -77,8 +77,8 @@
 ### 需求 / Requirements
 
 - Python 3.11+
-- [Ollama](https://ollama.com)（本地 AI，選用）
 - Telegram Bot Token（從 [@BotFather](https://t.me/BotFather) 取得）
+- [Ollama](https://ollama.com)（本地 AI，選用，硬體建議見下方）
 
 ### 1. 安裝套件
 
@@ -86,6 +86,7 @@
 git clone https://github.com/你的帳號/taiwan-defense-bot.git
 cd taiwan-defense-bot
 pip install -r requirements.txt
+playwright install chromium   # TG 推送的地圖截圖用
 ```
 
 ### 2. 設定環境變數
@@ -104,25 +105,36 @@ TELEGRAM_CHANNEL_ID=@你的頻道ID
 # 選填（有才啟用對應功能）
 AISSTREAM_API_KEY=        # AIS 船隻追蹤
 GEMINI_API_KEY=           # AI 備援分析
+GEMINI_MODEL=gemini-2.5-flash-lite   # 2.0-flash-lite 已下架
 GOOGLE_MAPS_API_KEY=      # 衛星圖層
+CARTO_API_KEY=            # 地圖底圖（未填自動改用 Esri 免 key 底圖）
 
-# 本地 AI（使用 Ollama）
+# 本地 AI（使用 Ollama，選用）
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:27b
+OLLAMA_MODEL=gemma3:12b   # 依顯卡選擇，見「硬體需求」
+OLLAMA_TIMEOUT=180        # 單次呼叫逾時秒數，純 CPU 建議 300 以上
 
 # Web Dashboard 對外網址
 WEB_BASE_URL=http://127.0.0.1:5000
 ```
 
-### 3. 啟動 Ollama（選用）
+### 3. 安裝 Ollama（選用）
 
 ```bash
-# 安裝後執行，首次會下載模型（約 17GB）
-ollama run gemma3:27b
+# Windows（PowerShell）
+irm https://ollama.com/install.ps1 | iex
 
-# 較小的備用模型（約 8GB）
-ollama run gemma3:12b
+# macOS / Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 下載模型（依顯卡選擇，見下方「硬體需求」）
+ollama pull gemma3:12b
+
+# 測速：看結尾 eval rate（token/s）
+ollama run gemma3:12b --verbose
 ```
+
+> 沒有安裝 Ollama 也能運作：新聞改用**規則評分**，ADS-B / 官媒分析改用 **Gemini 備援**（需 `GEMINI_API_KEY`），只是少了 AI 摘要、認知作戰偵測與日報/週報的 AI 研判。
 
 ### 4. 啟動 Bot
 
@@ -131,6 +143,25 @@ python main.py
 ```
 
 啟動後 Web Dashboard 會在 http://127.0.0.1:5000 開啟。
+
+---
+
+## 🖥️ 硬體需求 / Hardware
+
+所有 AI 分析都在排程中執行，**速度不影響功能**，只要不超過 `OLLAMA_TIMEOUT`。硬體較慢就把逾時調高，不必為了本專案升級顯卡。
+
+| 等級 | 顯卡（VRAM） | 建議模型 | 模型大小 | 說明 |
+|------|-------------|---------|---------|------|
+| 最低 | 無顯卡（16GB RAM） | `gemma3:4b` | ~3.3GB | 純 CPU 可跑，中文判讀較淺；`OLLAMA_TIMEOUT=300` |
+| 入門 | 6–8GB（GTX 1060 6G、RTX 2060、4060） | `gemma3:4b` | ~3.3GB | 全部放進顯卡；12b 也能跑，但部分在 CPU |
+| **推薦** | **12GB（RTX 3060 12G）** | **`gemma3:12b`** | ~8GB | 全部放進顯卡，CP 值最高 |
+| 進階 | 16GB（RTX 4060 Ti / 5060 Ti 16G） | `gemma3:12b` | ~8GB | 可開較長上下文，批次分析更穩 |
+| 高階 | 24GB（RTX 3090 / 4090） | `gemma3:27b` | ~17GB | 中文研判品質最佳 |
+
+- 系統記憶體建議 **16GB 以上**（模型 + Chromium 截圖 + 主程式）。
+- 建議 **RTX 20 系列以上**。GTX 10 系列（Pascal）已接近 NVIDIA 驅動與 CUDA 支援終點，新版 Ollama 可能無法使用 GPU。
+- 出現 `CUDA error: the provided PTX was compiled with an unsupported toolchain`：表示**顯卡驅動太舊**，更新 NVIDIA 驅動即可；若仍失敗，可設定環境變數 `CUDA_VISIBLE_DEVICES=-1` 改用 CPU。
+- 換模型只需修改 `.env` 的 `OLLAMA_MODEL` 並 `ollama pull` 對應模型，不用改程式。
 
 ---
 
@@ -183,7 +214,8 @@ taiwan-defense-bot/
 │   └── error_notify.py     # 錯誤通知
 │
 ├── maps/
-│   └── map_generator.py    # Folium 互動地圖
+│   ├── map_generator.py    # Folium 互動地圖
+│   └── cable_data.py       # 海底電纜資料（登陸站/路由/名稱比對/故障點）
 │
 ├── database/
 │   ├── models.py           # 資料表定義
@@ -203,6 +235,7 @@ taiwan-defense-bot/
 | AISStream | ⭕ | [aisstream.io](https://aisstream.io) | 免費帳號 |
 | Google Gemini | ⭕ | [aistudio.google.com](https://aistudio.google.com) | 免費額度 |
 | Google Maps | ⭕ | [console.cloud.google.com](https://console.cloud.google.com) | 衛星圖層用 |
+| CARTO Basemaps | ⭕ | [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/) | 地圖底圖；未填改用 Esri |
 | Copernicus | ⭕ | [dataspace.copernicus.eu](https://dataspace.copernicus.eu) | 選用 |
 
 > ⭕ = 選用，沒有對應功能會自動跳過
@@ -219,11 +252,20 @@ taiwan-defense-bot/
 | 每 1 小時 | 國台辦、AI 評分 |
 | 每 2 小時 | AIS 船隻、中共官媒、智庫 |
 | 每 4 小時 | 海底電纜 |
-| 每日 08:00 | 晨間概況推送 + 衛星影像 |
+| 每日 08:00 | 晨間概況推送 |
+| 每日 08:05 | 衛星影像（每日輪替一處基地）|
 | 每日 19:00 | 威脅評分計算 |
 | 每日 20:00 | 情勢日報 + 趨勢圖 |
 | 每週日 21:00 | 週報 |
 | 每月 1 日 | 石油消耗指標更新 |
+
+---
+
+## 🗺️ 地圖說明 / Map Notes
+
+- 底圖：預設使用免 key 的 Esri Dark Gray；在 `.env` 填 `CARTO_API_KEY` 會改用 CARTO Dark Matter（CARTO 自 2026 起需要 API key）。
+- 海底電纜為**示意路由**：登陸站（淡水／八里／頭城）與走向正確、避開陸地，但不是實際鋪設座標。
+- 電纜狀態來自 MODA 海纜障礙表；故障點依公告「距○○約 N 公里」推估標示，從表上移除的電纜自動視為已修復。
 
 ---
 

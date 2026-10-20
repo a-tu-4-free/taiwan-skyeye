@@ -1,0 +1,46 @@
+taiwan-defense-bot/
+├── main.py
+├── config.py
+├── scheduler.py              # 含 ADS-B、中共官媒、民船、石油排程
+│
+├── scrapers/
+│   ├── mnd.py                # 國防部（共軍擾台）
+│   ├── cga.py                # 海巡署
+│   ├── gwytb.py              # 國台辦
+│   ├── ptt.py                # PTT 軍武板
+│   ├── news.py               # 新聞聚合
+│   ├── intl_news.py          # 國際媒體
+│   ├── gov_tw.py             # 外交部
+│   ├── cable_monitor.py      # 海底電纜（MODA 障礙表解析 + 自動判定已修復）
+│   ├── satellite.py          # 衛星影像（Google Maps，不做 AI 判讀）
+│   ├── thinktank.py          # 智庫監控
+│   ├── ais.py                # AIS 船隻 + 民船徵用偵測 ★新增
+│   ├── adsb_monitor.py       # ADS-B 軍機監控（OpenSky）★新增
+│   ├── china_media.py        # 中共官媒輿論監控 ★新增
+│   └── oil_monitor.py        # 中國石油消耗指標 ★新增
+│
+├── database/
+│   ├── models.py             # 含 AnomalyLog、VesselTracking、CableStatus
+│   └── db.py                 # 含去重、最新一筆查詢
+│
+├── analyzer/
+│   ├── ollama_client.py      # 本地 AI（預設 gemma3:12b，.env 可換）
+│   ├── threat_score.py       # 台海相關性過濾 + 異常加分
+│   └── anomaly_detector.py   # 8種異常偵測 + 白話說明 ★重寫
+│
+├── bot/
+│   ├── telegram_bot.py       # 免費/付費分流（premium_only）★更新
+│   ├── alert_engine.py       # 各 scraper 圖片推送
+│   ├── formatter.py          # HTML 格式 + 晨報 + 異常說明 ★重寫
+│   ├── card_generator.py     # matplotlib 卡片生成 ★新增
+│   └── map_notifier.py       # playwright 地圖截圖 ★新增
+│
+├── maps/
+│   ├── map_generator.py      # Folium 地圖（Esri/CARTO 底圖）+ 電纜即時狀態
+│   └── cable_data.py         # 電纜單一資料來源：登陸站、示意路由、名稱比對、故障點推估
+│
+└── data/
+    ├── defense.db
+    ├── cards/                # 卡片圖片快取
+    ├── map_shots/            # 地圖截圖快取
+    └── satellite/            # 衛星影像快取

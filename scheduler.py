@@ -62,14 +62,14 @@ ESCALATED_INTERVAL = 15
 NORMAL_INTERVALS = {
     "check_alerts":  2,
     "anomaly_check": 5,
-    "intl_news":     15,
+    "intl_news":     30,
     "scrape_all":    SCRAPER_INTERVAL_MINUTES,
     "ptt_realtime":  30,    # 原本 5 分鐘，改為 30 分鐘
     "gwytb_check":   60,
     "analyze_news":  60,
     "ais_scrape":    120,
     "thinktank":     120,
-    "cable_monitor": 60,    # 原本 4 小時，縮短為 1 小時
+    "cable_monitor": 240,   # 與 build_scheduler 一致（4 小時）
 }
 
 
@@ -217,6 +217,15 @@ async def _push_anomaly_alert(bot: Bot, anomaly: dict):
                 return
 
         elif atype == "CABLE_INCIDENT":
+            # task_cable_monitor 剛推過電纜警報（1 小時內）就不重複推
+            recent_cable_push = any(
+                k.startswith("cable_") and not k.startswith("cable_status_")
+                and isinstance(t, datetime) and (datetime.now() - t).total_seconds() < 3600
+                for k, t in _notified_cache.items()
+            )
+            if recent_cable_push:
+                print("[SCHED] 電纜異常已由電纜監控推送，略過重複通知")
+                return
             from database.db import get_all_cable_status
             from bot.alert_engine import push_cable_with_map
             cables = [{"cable_name": c.cable_name, "status": c.status,
@@ -334,21 +343,27 @@ async def task_analyze_news():
         from database.db import get_recent_news, update_news_ai_data, update_news_cog_war
         from analyzer.ollama_client import (
             analyze_news_threat, batch_detect_cognitive_warfare,
-            check_ollama_available
+            check_ollama_available, rule_based_score
         )
-        if not check_ollama_available():
-            return
-
         recent   = get_recent_news(hours=2)
         unscored = [n for n in recent if (n.threat_score or 0) == 0.0]
         print(f"[SCHED] 待評分：{len(unscored)} 則")
+
+        # 沒有 Ollama 時改用純規則評分，否則 threat_score 永遠是 0、高威脅警報不會觸發
+        if not check_ollama_available():
+            for news in unscored[:50]:
+                rule = rule_based_score(news.title or "", news.content or "", news.source or "")
+                update_news_ai_data(news.id, (news.title or "")[:80], rule["score"])
+            print(f"[SCHED] Ollama 未啟用，規則評分 {min(len(unscored), 50)} 則")
+            return
 
         ai_called = 0
         skipped   = 0
 
         for news in unscored[:15]:
-            result = analyze_news_threat(
-                news.title, news.content or "", news.source or ""
+            # Ollama 呼叫是同步阻塞的，丟到 thread 才不會卡住 TG Bot 與其他排程
+            result = await asyncio.to_thread(
+                analyze_news_threat, news.title, news.content or "", news.source or ""
             )
             update_news_ai_data(news.id, result["summary"], result["score"])
 
@@ -364,7 +379,7 @@ async def task_analyze_news():
         # 批次認知作戰偵測（單次 Ollama 呼叫取代多次）
         high_score_news = [n for n in recent if (n.threat_score or 0) >= 3.0]
         if high_score_news:
-            cog_results = batch_detect_cognitive_warfare(high_score_news)
+            cog_results = await asyncio.to_thread(batch_detect_cognitive_warfare, high_score_news)
             for news_id, cog in cog_results.items():
                 if cog.get("is_cog_war") and cog.get("confidence", 0) >= 75:
                     update_news_cog_war(
@@ -590,7 +605,7 @@ async def task_thinktank(bot=None):
 
 
 async def task_cable_monitor(bot: Bot = None):
-    """【每4小時】海底電纜監控（一天最多推幾次，避免重複通知）"""
+    """【每4小時】海底電纜監控（只推 MODA 新增的障礙；同電纜 24h 冷卻，升級為中斷立即推）"""
     try:
         from scrapers.cable_monitor import run as cable_run
         results = await asyncio.to_thread(cable_run)
@@ -789,7 +804,7 @@ async def task_weekly_report(bot: Bot):
             "key_events":       "詳見每日日報",
         }
 
-        ai_weekly = generate_weekly_report(weekly_data) if check_ollama_available() else ""
+        ai_weekly = (await asyncio.to_thread(generate_weekly_report, weekly_data)) if check_ollama_available() else ""
         msg = format_weekly_report(weekly_data, ai_weekly)
         await bot.send_message(
             chat_id=TELEGRAM_CHANNEL_ID,
@@ -812,7 +827,10 @@ async def task_cleanup():
     import glob
     cleaned = 0
     cutoff  = datetime.now() - timedelta(days=7)
-    for pattern in ["data/*.png", "data/satellite/*.png"]:
+    base    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    for pattern in ["*.png", "satellite/*.png", "cards/*.png",
+                    "map_shots/*.png", "map_shots/*.html"]:
+        pattern = os.path.join(base, pattern)
         for f in glob.glob(pattern):
             if os.path.getmtime(f) < cutoff.timestamp():
                 os.remove(f)
@@ -1000,8 +1018,9 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     # ── 全域錯誤監聽 ────────────────────────────────
     def job_error_listener(event):
         if event.exception:
+            import html
             job_id = event.job_id
-            error  = str(event.exception)[:200]
+            error  = html.escape(str(event.exception)[:200])
             print(f"[SCHED ERROR] Job {job_id}: {error}")
             try:
                 from bot.error_notify import notify_admin
@@ -1028,10 +1047,11 @@ def print_schedule(scheduler: AsyncIOScheduler):
         "🟠 偵測層":   ["anomaly_check"],
         "🟡 高頻層":   ["intl_news"],
         "🟢 標準層":   ["ptt_realtime", "scrape_all", "gwytb_check",
-                        "analyze_news", "cable_monitor"],
-        "⚪ 低頻層":   ["ais_scrape", "thinktank"],
-        "📅 每日任務": ["satellite", "update_map_am", "update_map_pm",
+                        "analyze_news", "cable_monitor", "adsb_monitor"],
+        "⚪ 低頻層":   ["ais_scrape", "china_media", "thinktank"],
+        "📅 每日任務": ["morning_brief", "satellite", "update_map_am", "update_map_pm",
                         "realtime_map", "daily_scoring", "daily_report"],
+        "🗓️ 每月任務": ["oil_monitor"],
         "📆 每週任務": ["weekly_report", "cleanup"],
     }
 
