@@ -12,8 +12,8 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from config import MAP_CENTER, MAP_ZOOM, MAP_OUTPUT_PATH
-from database.db import get_intrusion_stats, get_all_cable_status, get_session
+from config import MAP_CENTER, MAP_ZOOM, MAP_OUTPUT_PATH, CARTO_API_KEY
+from database.db import get_session
 from database.models import VesselTracking, IntrusionRecord
 
 # ==============================
@@ -33,88 +33,17 @@ TAIWAN_LOCATIONS = {
     "綠島":   [22.671, 121.489],
 }
 
-SUBMARINE_CABLES = [
-    # ── 淡水登陸（25.18N, 121.43E）─────────────────────────
-    # 注意：淡水在台灣西北角海岸，電纜往東出海後轉向目的地
-    {"name": "APCN-2",
-     "route": "台灣淡水 → 香港 → 日本 → 韓國",
-     "coords": [[25.18, 121.55], [25.0, 122.5], [24.0, 122.8], [22.5, 122.5]]},
-    {"name": "SJC2",
-     "route": "台灣淡水 → 日本 → 東南亞",
-     "coords": [[25.18, 121.55], [26.0, 123.0], [28.0, 127.5]]},
-    {"name": "TPE",
-     "route": "台灣淡水 → 日本 → 美國",
-     "coords": [[25.18, 121.56], [27.0, 125.0], [30.0, 140.0]]},
-    {"name": "FASTER",
-     "route": "台灣淡水 → 日本 → 美國（Google）",
-     "coords": [[25.18, 121.57], [26.5, 124.0], [28.5, 130.0]]},
-    {"name": "TSE-1",
-     "route": "台灣淡水 → 福州（兩岸直連）",
-     "coords": [[25.18, 121.44], [25.4, 120.8], [25.7, 120.0], [26.1, 119.3]]},
+# 海底電纜資料統一放在 maps/cable_data.py（登陸站、示意路由、名稱比對）
+from maps.cable_data import (
+    SUBMARINE_CABLES, match_cable_name, offset_line, locate_fault,
+)
 
-    # ── 八里登陸（25.13N, 121.35E）─────────────────────────
-    # 八里在台灣西北海岸，電纜往西出海後往南走
-    {"name": "EAC-C2C",
-     "route": "台灣淡水 → 香港 → 菲律賓 → 新加坡",
-     "coords": [[25.18, 121.60], [25.30, 122.10], [24.5, 122.3],
-                [22.5, 121.8], [20.5, 120.5], [18.0, 119.8]]},
+# 高威脅機型（MND 地圖標示用）
+HIGH_THREAT_TYPES = ["轟-6", "轟6", "H-6", "空警", "KJ-", "運-8", "運-9", "Y-8", "Y-9",
+                     "無人機", "TB-001", "BZK", "殲-16", "殲-20", "J-16", "J-20"]
 
-    # ── 頭城登陸（24.87N, 121.85E）─────────────────────────
-    {"name": "SMW3",
-     "route": "台灣頭城 → 日本 → 中東 → 歐洲",
-     "coords": [[24.87, 122.00], [26.0, 124.0], [28.0, 128.0]]},
-    {"name": "APG",
-     "route": "台灣頭城 → 香港 → 日本 → 東南亞",
-     "coords": [[24.87, 122.00], [23.5, 122.5], [21.0, 122.0], [18.0, 121.5]]},
-    {"name": "NCP",
-     "route": "台灣頭城 → 日本 → 美國",
-     "coords": [[24.87, 122.01], [27.0, 125.0], [32.0, 140.0]]},
-    {"name": "PLCN",
-     "route": "台灣頭城 → 菲律賓 → 美國（Google/Meta）",
-     "coords": [[24.87, 122.02], [22.0, 122.5], [18.0, 122.0], [15.0, 121.5]]},
-    {"name": "HKA",
-     "route": "台灣頭城 → 香港 → 東南亞（Meta）",
-     "coords": [[24.87, 121.99], [23.0, 122.0], [21.5, 121.5], [20.0, 120.8]]},
-
-    # ── 枋山登陸（22.27N, 120.65E）─────────────────────────
-    {"name": "SMW3-S",
-     "route": "台灣枋山 → 菲律賓 → 中東",
-     "coords": [[22.27, 120.65], [21.0, 120.8], [18.0, 120.5], [15.0, 120.0]]},
-    {"name": "PCCS",
-     "route": "台灣枋山 → 菲律賓",
-     "coords": [[22.27, 120.64], [20.8, 120.5], [19.5, 120.2], [18.0, 119.8]]},
-
-    # ── 國內海纜（本島↔離島）────────────────────────────────
-    # 石門→馬祖：從台灣西北角往西北方向
-    {"name": "TDM2",
-     "route": "台灣石門 → 馬祖南竿",
-     "coords": [[25.30, 121.47], [25.5, 120.9], [25.9, 120.3], [26.16, 119.93]]},
-    {"name": "TM3",
-     "route": "台灣石門 → 馬祖南竿",
-     "coords": [[25.30, 121.45], [25.6, 120.7], [26.0, 120.1], [26.16, 119.93]]},
-    # 本島→金門：從台灣西南（台南/高雄）往金門
-    {"name": "TKC",
-     "route": "台灣台南 → 金門",
-     "coords": [[22.90, 120.15], [23.30, 119.70], [23.80, 119.20], [24.43, 118.35]]},
-    # 金門→廈門（兩岸）
-    {"name": "TSE（金廈）",
-     "route": "金門 → 廈門（兩岸，全長21km）",
-     "coords": [[24.43, 118.40], [24.48, 118.25], [24.50, 118.10]]},
-    # 本島→澎湖：從台灣西岸往西
-    {"name": "TPCA",
-     "route": "台灣布袋 → 澎湖馬公",
-     "coords": [[23.40, 120.15], [23.45, 119.95], [23.55, 119.65], [23.57, 119.57]]},
-    {"name": "TPCE",
-     "route": "台灣布袋 → 澎湖（電力）",
-     "coords": [[23.38, 120.13], [23.44, 119.90], [23.55, 119.62], [23.57, 119.55]]},
-]
-
-# 台海中線：北端 121.3°E，南端 119.0°E
-MEDIAN_LINE_COORDS = [
-    [27.0, 121.30], [26.5, 121.00], [26.0, 120.65],
-    [25.5, 120.25], [25.0, 119.90], [24.5, 119.55],
-    [24.0, 119.25], [23.5, 119.05], [23.0, 118.95]
-]
+# 台海中線
+MEDIAN_LINE_COORDS = [[27.0, 122.0], [23.0, 118.0]]   # 戴維斯線：北 27N/122E ─ 南 23N/118E
 
 ADIZ_COORDS = [
     [27.0, 120.0], [27.0, 124.0], [25.0, 126.0],
@@ -146,85 +75,181 @@ ZONE_CENTERS = {
 # 共用工具函式
 # ==============================
 
-# 電纜名稱別名對照表（MODA 中文名 ↔ 地圖英文 key）
-CABLE_ALIASES = {
-    "APCN-2":      ["亞太2號", "亞太二號", "APCN2", "APCN-2"],
-    "EAC-C2C":     ["東亞交匯一號", "EAC1", "EAC-C2C", "EAC C2C"],
-    "SMW3":        ["法新歐亞三號", "SMW3", "SMW-3", "SEA-ME-WE3"],
-    "SMW3-S":      ["法新歐亞三號", "SMW3"],   # 南段共用
-    "APG":         ["亞太直達", "APG"],
-    "TPE":         ["橫太平洋快速", "TPE"],
-    "NCP":         ["新橫太平洋", "NCP"],
-    "FASTER":      ["FASTER"],
-    "PLCN":        ["太平洋光纜", "PLCN"],
-    "SJC":         ["東南亞日本", "SJC"],
-    "SJC2":        ["東南亞日本二號", "SJC2", "SJC-2"],
-    "HKA":         ["HKA"],
-    "PCCS":        ["PCCS"],
-    "TSE-1":       ["海峽光纜一號", "TSE", "TSE-1", "淡福"],
-    "FLAG/FEA":    ["FLAG", "FEA"],
-    "TDM2":        ["臺馬二號", "台馬二號", "TDM2", "TDM-2"],
-    "TM3":         ["臺馬三號", "台馬三號", "TM3", "TM-3"],
-    "TKC":         ["台金", "臺金", "TKC", "金門海纜"],
-    "TSE（金廈）": ["金廈", "金廈海纜", "Cross Straits", "TSE金廈"],
-    "TPCA":        ["台澎", "臺澎", "TPCA", "台澎海纜"],
-    "TPCE":        ["台澎電力", "TPCE"],
-}
+_match_cable_name = match_cable_name   # 舊名稱相容（其他模組可能還在用）
 
-
-def _match_cable_name(db_name: str) -> str:
-    """
-    模糊比對資料庫電纜名稱 → 地圖 key
-    支援 MODA 中文名稱如「臺馬二號海纜( TDM2 )」
-    回傳地圖 key，找不到回傳空字串
-    """
-    nu = db_name.upper().replace(" ", "").replace("（", "").replace("）", "").replace("(", "").replace(")", "")
-    for map_key, aliases in CABLE_ALIASES.items():
-        for alias in aliases:
-            au = alias.upper().replace(" ", "").replace("-", "")
-            ku = map_key.upper().replace("-", "").replace(" ", "")
-            if au in nu or nu in au or ku in nu or nu in ku:
-                return map_key
-    return ""
+_SEVERITY = {"中斷": 3, "障礙": 2, "異常": 2, "維修中": 1}
 
 
 def get_cable_realtime_status() -> dict:
     """
-    從資料庫取得電纜即時狀態
-    回傳 {地圖cable_name: status_info}
-    支援 MODA 中文名稱模糊比對
+    從資料庫取得電纜即時狀態，回傳 {地圖cable_name: status_info}
+    - MODA 障礙表只列「目前未修復」的事件，舊事件可能超過一年仍在表上
+    - 遇到「已修復」紀錄即停止往前看（代表之前的障礙已排除）
+    - 同一條電纜有多筆未修復障礙時，取最嚴重狀態，並保留全部故障描述
     """
     from database.models import CableStatus
     from sqlalchemy import desc
     status_map = {}
+    closed     = set()
     session    = get_session()
     try:
-        cutoff = datetime.now() - timedelta(days=90)
+        cutoff_moda  = datetime.now() - timedelta(days=400)
+        cutoff_other = datetime.now() - timedelta(days=30)
         events = session.query(CableStatus).filter(
-            CableStatus.reported_at >= cutoff
-        ).order_by(desc(CableStatus.reported_at)).all()
+            CableStatus.reported_at >= cutoff_moda
+        ).order_by(desc(CableStatus.reported_at), desc(CableStatus.id)).all()
 
         for e in events:
-            map_key = _match_cable_name(e.cable_name)
-            if not map_key:
+            if e.source != "MODA" and e.reported_at < cutoff_other:
                 continue
-            # 只保留最新一筆（已按 reported_at DESC 排序）
-            if map_key not in status_map:
-                status_map[map_key] = {
-                    "status":        e.status,
-                    "incident_type": e.incident_type or "",
-                    "notes":         e.notes or "",
-                    "reported_at":   e.reported_at,
-                    "source":        e.source or "",
-                    "original_name": e.cable_name,  # 保留原始名稱供 popup 顯示
+            map_key = match_cable_name(e.cable_name)
+            if not map_key or map_key in closed:
+                continue
+            info = status_map.get(map_key)
+            if e.status in ("已修復", "正常"):
+                if info is None:
+                    status_map[map_key] = {
+                        "status": "已修復", "incident_type": "", "notes": e.notes or "",
+                        "reported_at": e.reported_at, "source": e.source or "",
+                        "original_name": e.cable_name, "faults": [],
+                    }
+                closed.add(map_key)
+                continue
+            if info is None:
+                info = status_map[map_key] = {
+                    "status": e.status, "incident_type": e.incident_type or "",
+                    "notes": e.notes or "", "reported_at": e.reported_at,
+                    "source": e.source or "", "original_name": e.cable_name,
+                    "faults": [],
                 }
-                print(f"[MAP] 電纜狀態：{e.cable_name} → {map_key} ({e.status})")
+            elif _SEVERITY.get(e.status, 0) > _SEVERITY.get(info["status"], 0):
+                info["status"] = e.status
+            info["faults"].append({
+                "status": e.status, "notes": e.notes or "", "reported_at": e.reported_at,
+            })
     finally:
         session.close()
+    for k, v in status_map.items():
+        print(f"[MAP] 電纜狀態：{v['original_name']} → {k} ({v['status']})")
     return status_map
 
 
-def _add_base_layers(m: folium.Map) -> dict:
+_STATUS_STYLE = {
+    "中斷":   ("#ff2222", 4),
+    "障礙":   ("#ff8800", 3),
+    "異常":   ("#ff8800", 3),
+    "維修中": ("#ffcc00", 3),
+    "已修復": ("#88ff88", 2),
+}
+_INTL_COLOR     = "#00e08a"
+_DOMESTIC_COLOR = "#33c3ff"
+
+
+def _draw_cables(layer, status_map: dict, highlight: set = None):
+    """
+    繪製所有電纜
+    - 同一登陸站的電纜做法線偏移，避免全部疊在同一條線上
+    - 異常電纜依 MODA 描述推估故障點並標示
+    highlight：需要加粗發光的地圖 key（電纜警報圖用）
+    """
+    import html as _html
+    highlight = highlight or set()
+    by_landing = {}
+    for c in SUBMARINE_CABLES:
+        by_landing.setdefault(c["landing"], []).append(c["name"])
+
+    for cable in SUBMARINE_CABLES:
+        name   = cable["name"]
+        db     = status_map.get(name, {})
+        status = db.get("status", "正常")
+        color, weight = _STATUS_STYLE.get(
+            status, (_INTL_COLOR if cable["intl"] else _DOMESTIC_COLOR, 2))
+        if status == "已修復" and db.get("reported_at") and \
+                (datetime.now() - db["reported_at"]).days > 7:
+            color, weight = (_INTL_COLOR if cable["intl"] else _DOMESTIC_COLOR, 2)
+            status = "正常"
+
+        group = by_landing[cable["landing"]]
+        d     = 0.03 * (group.index(name) - (len(group) - 1) / 2) if len(group) > 1 else 0
+
+        popup_html = (f"<b>🔌 {name}</b><br>路由：{cable['route']}<br>"
+                      f"狀態：<b>{status}</b><br>")
+        if db.get("original_name"):
+            popup_html += f"MODA 名稱：{_html.escape(db['original_name'])}<br>"
+        for f in db.get("faults", [])[:3]:
+            dt = f["reported_at"].strftime("%Y-%m-%d") if f["reported_at"] else ""
+            popup_html += f"• {dt} {_html.escape(f['notes'][:90])}<br>"
+        if db.get("source"):
+            popup_html += f"來源：{db['source']}"
+
+        status_icon = ("🔴" if status == "中斷" else
+                       "🟠" if status in ("障礙", "異常") else "✅")
+        lines = [offset_line(seg, d) for seg in cable["segments"]]
+
+        if name in highlight and status in ("中斷", "障礙", "異常"):
+            folium.PolyLine(locations=lines, color=color, weight=weight + 4,
+                            opacity=0.25).add_to(layer)
+
+        folium.PolyLine(
+            locations=lines,
+            color=color, weight=weight, opacity=0.9,
+            dash_array=None if cable["intl"] else "6 4",
+            tooltip=f"🔌 {name} {status_icon} [{status}]",
+            popup=folium.Popup(popup_html, max_width=300),
+        ).add_to(layer)
+
+        # 故障點：依「距○○約N公里」推估（參考點在地圖外，如馬來西亞關丹，就不標點，只靠線色＋popup）
+        if status in ("中斷", "障礙", "異常"):
+            marks = []
+            for f in db.get("faults", []):
+                loc = locate_fault(name, f["notes"])
+                if loc:
+                    marks.append((loc[0], loc[1], f["status"], loc[2]))
+            for lat, lon, st, desc in marks:
+                folium.Marker(
+                    location=[lat, lon],
+                    icon=folium.DivIcon(
+                        html=f'<div style="font-size:16px;text-shadow:0 0 6px {color};">'
+                             f'{"⚡" if st == "中斷" else "⚠️"}</div>',
+                        icon_size=(20, 20), icon_anchor=(10, 10)
+                    ),
+                    tooltip=f"{name}：{st}｜{desc}",
+                ).add_to(layer)
+
+
+def make_base_map(location, zoom_start: int) -> folium.Map:
+    """
+    建立底圖
+    CARTO 自 2026 起要求 API key（否則圖磚出現「API KEY REQUIRED」浮水印）
+    - .env 有 CARTO_API_KEY → 用 CARTO Dark Matter
+    - 沒有 → 改用免 key 的 Esri Dark Gray Canvas
+    """
+    m = folium.Map(location=location, zoom_start=zoom_start,
+                   tiles=None, prefer_canvas=True)
+    if CARTO_API_KEY:
+        folium.TileLayer(
+            tiles="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                  f"?key={CARTO_API_KEY}",
+            attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+                 '&copy; <a href="https://carto.com/attributions">CARTO</a>',
+            name="CARTO Dark", subdomains="abcd", max_zoom=19, control=False,
+        ).add_to(m)
+    else:
+        esri = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/{}/MapServer/tile/{{z}}/{{y}}/{{x}}"
+        folium.TileLayer(
+            tiles=esri.format("World_Dark_Gray_Base"),
+            attr="Esri, HERE, Garmin, &copy; OpenStreetMap contributors",
+            name="Esri Dark Gray", max_zoom=16, control=False,
+        ).add_to(m)
+        folium.TileLayer(
+            tiles=esri.format("World_Dark_Gray_Reference"),
+            attr="Esri", name="Labels", max_zoom=16,
+            overlay=True, control=False,
+        ).add_to(m)
+    return m
+
+
+def _add_base_layers(m: folium.Map, cable_highlight: set = None) -> dict:
     """
     加入共用底圖圖層（ADIZ、中線、電纜、地點）
     回傳 layer dict 供後續使用
@@ -255,7 +280,7 @@ def _add_base_layers(m: folium.Map) -> dict:
         tooltip="海峽中線",
     ).add_to(layers["median"])
     folium.Marker(
-        location=[26.8, 120.6],
+        location=[26.75, 121.85],
         icon=folium.DivIcon(
             html='<div style="color:#ff6600;font-size:11px;font-weight:bold;'
                  'white-space:nowrap;text-shadow:1px 1px 2px #000;">海峽中線</div>',
@@ -264,50 +289,7 @@ def _add_base_layers(m: folium.Map) -> dict:
     ).add_to(layers["median"])
 
     # 電纜圖層
-    cable_status_map = get_cable_realtime_status()
-    for cable in SUBMARINE_CABLES:
-        name      = cable["name"]
-        db_status = cable_status_map.get(name, {})
-        status    = db_status.get("status", "正常")
-        inc_type  = db_status.get("incident_type", "")
-        notes     = db_status.get("notes", "")
-        reported  = db_status.get("reported_at")
-        source    = db_status.get("source", "")
-
-        if status == "中斷":
-            color, weight = "#ff2222", 4
-        elif status in ("障礙", "異常"):
-            color, weight = "#ff8800", 3
-        elif status == "已修復":
-            color, weight = "#88ff88", 2
-        else:
-            color, weight = "#00ff88", 2
-
-        popup_html = f"<b>🔌 {name}</b><br>狀態：<b>{status}</b><br>"
-        if inc_type: popup_html += f"事件類型：{inc_type}<br>"
-        if reported: popup_html += f"發生時間：{reported.strftime('%Y-%m-%d')}<br>"
-        if source:   popup_html += f"來源：{source}<br>"
-        if notes:    popup_html += f"備註：{notes[:100]}"
-
-        status_icon = "🔴" if status == "中斷" else "🟠" if status in ("障礙","異常") else "✅"
-        folium.PolyLine(
-            locations=cable["coords"],
-            color=color, weight=weight, opacity=0.85,
-            tooltip=f"🔌 {name} {status_icon} [{status}]",
-            popup=folium.Popup(popup_html, max_width=280)
-        ).add_to(layers["cable"])
-
-        if status in ("中斷", "障礙", "異常"):
-            mid = cable["coords"][len(cable["coords"]) // 2]
-            folium.Marker(
-                location=mid,
-                icon=folium.DivIcon(
-                    html=f'<div style="font-size:16px;text-shadow:1px 1px 2px #000;">'
-                         f'{"⚡" if status == "中斷" else "⚠️"}</div>',
-                    icon_size=(20, 20), icon_anchor=(10, 10)
-                ),
-                tooltip=f"{name}：{status}"
-            ).add_to(layers["cable"])
+    _draw_cables(layers["cable"], get_cable_realtime_status(), highlight=cable_highlight)
 
     # 重要地點
     for name, coords in TAIWAN_LOCATIONS.items():
@@ -484,8 +466,11 @@ def _finalize_map(m: folium.Map, layers: dict, title: str = "台灣國防態勢�
         <span style="color:#ff0000;">● 越中線</span><br>
         <span style="color:#ff8800;">● 擾臺事件</span>　
         <span style="color:#00aaff;">■ ADIZ</span><br>
-        <span style="color:#00ff88;">── 正常電纜</span>　
-        <span style="color:#ff4444;">── 異常電纜</span>
+        <span style="color:#00e08a;">── 國際海纜</span>　
+        <span style="color:#33c3ff;">┄┄ 國內海纜</span><br>
+        <span style="color:#ff8800;">── 障礙</span>　
+        <span style="color:#ff2222;">── 斷纜</span>　
+        <span style="color:#888;">（電纜為示意路由）</span>
     </div>
     """
     m.get_root().html.add_child(folium.Element(info_html))
@@ -503,10 +488,7 @@ def generate_defense_map() -> str:
     - 電纜即時狀態
     """
     print("[MAP] 生成每日全量地圖...")
-    m = folium.Map(
-        location=MAP_CENTER, zoom_start=MAP_ZOOM,
-        tiles="CartoDB dark_matter", prefer_canvas=True
-    )
+    m = make_base_map(MAP_CENTER, MAP_ZOOM)
     layers = _add_base_layers(m)
     _add_intrusion_layer(layers, days=7)
     _add_vessel_layer(layers, hours=24, show_track=False)
@@ -533,10 +515,7 @@ def generate_realtime_map(output_path: str = None) -> str:
         base = os.path.dirname(MAP_OUTPUT_PATH)
         output_path = os.path.join(base, "realtime_map.html")
 
-    m = folium.Map(
-        location=MAP_CENTER, zoom_start=MAP_ZOOM,
-        tiles="CartoDB dark_matter", prefer_canvas=True
-    )
+    m = make_base_map(MAP_CENTER, MAP_ZOOM)
     layers = _add_base_layers(m)
 
     # 即時地圖：只顯示當日擾臺（days=1）+ 6小時船隻軌跡
@@ -579,10 +558,7 @@ def generate_snapshot_png(output_path: str = None, days: int = 1) -> str:
         output_path = os.path.join(base, f"snapshot_{days}d.png")
 
     # 生成對應 HTML
-    m = folium.Map(
-        location=MAP_CENTER, zoom_start=MAP_ZOOM,
-        tiles="CartoDB dark_matter", prefer_canvas=True
-    )
+    m = make_base_map(MAP_CENTER, MAP_ZOOM)
     layers = _add_base_layers(m)
     _add_intrusion_layer(layers, days=days)
     _add_vessel_layer(layers, hours=days * 24, show_track=(days == 1))
@@ -600,7 +576,7 @@ def generate_snapshot_png(output_path: str = None, days: int = 1) -> str:
             browser = p.chromium.launch()
             page    = browser.new_page(viewport={"width": 1200, "height": 800})
             page.goto(f"file:///{html_path.replace(os.sep, '/')}")
-            page.wait_for_timeout(2000)   # 等地圖 tile 載入
+            page.wait_for_timeout(3500)   # 等地圖 tile 載入
             page.screenshot(path=output_path, full_page=False)
             browser.close()
         print(f"[MAP] 截圖完成：{output_path}")
@@ -623,12 +599,7 @@ def generate_incident_map(center_lat: float, center_lon: float,
         ts          = datetime.now().strftime("%Y%m%d_%H%M")
         output_path = os.path.join(base, f"incident_{ts}.html")
 
-    m = folium.Map(
-        location=[center_lat, center_lon],
-        zoom_start=8,
-        tiles="CartoDB dark_matter",
-        prefer_canvas=True
-    )
+    m = make_base_map([center_lat, center_lon], 8)
     layers = _add_base_layers(m)
     _add_intrusion_layer(layers, days=1)
     _add_vessel_layer(layers, hours=6, show_track=True)
@@ -706,12 +677,13 @@ def _add_adsb_layer(layers: dict, hours: int = 6):
             # content 格式：[類別] callsign @ 區域 高度m 航向X°
             for line in content_text.split("\n"):
                 m = re.match(
-                    r"\[(.+?)\]\s+(\S+)\s+@\s+(\S+)\s+([\d.]+)m\s+航向([\d.]+)°",
+                    r"\[(.+?)\]\s*(\S*)\s+@\s+(\S+)\s+([\d.]+)m\s+航向([\d.]+)°",
                     line.strip()
                 )
                 if not m:
                     continue
                 category, callsign, zone, alt, heading = m.groups()
+                callsign = callsign or "不明"
                 color = CATEGORY_COLOR.get(category, "#ff8800")
 
                 # 沒有精確座標，用區域中心點代表性標示
