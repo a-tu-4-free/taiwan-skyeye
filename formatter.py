@@ -24,13 +24,6 @@ def i(text) -> str:
     return f"<i>{text}</i>"
 
 
-def esc(text) -> str:
-    """MarkdownV2 跳脫函數"""
-    text = str(text)
-    special_chars = r'\_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
-
-
 def format_daily_report(threat_data: dict, ai_analysis: str,
                         top_news: list, intrusion_stats: dict) -> str:
     """格式化每日情勢報告（含新聞摘要，HTML）"""
@@ -113,37 +106,6 @@ def format_daily_report(threat_data: dict, ai_analysis: str,
     msg += "🗺️ 態勢地圖：/map\n"
     msg += "📈 趨勢圖：/trend"
 
-    return msg.strip()
-
-
-def format_alert_message(news_title: str, news_url: str,
-                         score: float, ai_alert: str,
-                         source: str = "", extra: dict = None) -> str:
-    """格式化即時警報訊息（HTML）"""
-    if score >= 9:
-        alert_header = "🚨🚨🚨 " + b("緊急警報") + " 🚨🚨🚨"
-    elif score >= 7:
-        alert_header = "🔴 " + b("高度警示")
-    else:
-        alert_header = "🟠 " + b("注意事項")
-
-    time_str   = datetime.now().strftime('%H:%M:%S')
-    title_part = f'<a href="{news_url}">{news_title}</a>' if news_url else news_title
-
-    msg = (
-        f"{alert_header}\n"
-        f"{SEP}\n"
-        f"📌 {title_part}\n\n"
-        f"威脅指數：{b(f'{score:.1f}/10')}\n"
-    )
-    if source:
-        msg += f"來源：<code>{source}</code>\n"
-    if ai_alert:
-        msg += f"\n🤖 {b('即時研判：')}\n{ai_alert}\n"
-    msg += (
-        f"{SEP}\n"
-        f"⏰ {time_str}"
-    )
     return msg.strip()
 
 
@@ -434,24 +396,6 @@ def format_morning_brief(threat_data: dict, anomaly_summary: dict,
     return "\n".join(lines)
 
 
-def format_instant_alert(trigger_title: str, news_title: str,
-                         source: str, url: str,
-                         extra_context: str = "") -> str:
-    """格式化關鍵字即時觸發警報（比 format_alert_message 更精簡）"""
-    now_str  = datetime.now().strftime("%m/%d %H:%M")
-    url_part = f'\n🔗 <a href="{url}">查看原文</a>' if url else ""
-    ctx_part = f"\n{extra_context}" if extra_context else ""
-
-    return (
-        f"⚡ <b>{trigger_title}</b>\n"
-        f"<code>{now_str}</code>  來源：<code>{source}</code>\n"
-        f"{SEP}\n"
-        f"{news_title[:80]}"
-        f"{ctx_part}"
-        f"{url_part}"
-    )
-
-
 def format_project_intro() -> str:
     """
     /start 指令與頻道介紹訊息
@@ -490,7 +434,7 @@ def format_project_intro() -> str:
         f"{sep}\n"
         f"💬 {b('如何使用指令？')}\n"
         f"頻道為單向廣播，無法輸入指令。\n"
-        f"請直接私訊本 Bot，即可使用 /status、/today、/map 等所有查詢功能。\n\n"
+        f"請直接私訊 @taiwandefence_bot，即可使用 /status、/today、/map 等所有查詢功能。\n\n"
         f"輸入 /help 查看所有指令"
     )
 
