@@ -369,11 +369,17 @@ def insert_anomaly(scraper: str, anomaly_type: str, severity: str,
                     current_value: float, baseline_value: float,
                     deviation_pct: float, description: str) -> int:
     """
-    新增一筆異常紀錄
-    回傳新紀錄的 id
+    新增一筆異常紀錄，回傳新紀錄的 id
+    同 scraper + 類型只保留一筆活躍異常：新紀錄取代舊的（舊的標記為已解除）
+    （之前電纜異常每次觸發都新增一筆、從不解除，累積上千筆「活躍異常」）
     """
     session = get_session()
     try:
+        session.query(AnomalyLog).filter(
+            AnomalyLog.scraper      == scraper,
+            AnomalyLog.anomaly_type == anomaly_type,
+            AnomalyLog.resolved_at.is_(None),
+        ).update({AnomalyLog.resolved_at: datetime.now()}, synchronize_session=False)
         anomaly = AnomalyLog(
             scraper        = scraper,
             anomaly_type   = anomaly_type,
