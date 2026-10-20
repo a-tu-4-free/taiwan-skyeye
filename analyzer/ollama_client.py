@@ -9,7 +9,7 @@ import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT
 
 
 def ollama_generate(prompt: str, system_prompt: str = "", max_retries: int = 3) -> str:
@@ -34,13 +34,17 @@ def ollama_generate(prompt: str, system_prompt: str = "", max_retries: int = 3) 
 
     for attempt in range(max_retries):
         try:
-            resp = requests.post(url, json=payload, timeout=600)
+            resp = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
             resp.raise_for_status()
             data = resp.json()
             return data.get("response", "").strip()
         except requests.exceptions.ConnectionError:
             if attempt == 0:
                 print("[OLLAMA] 無法連線，請確認 Ollama 已啟動（ollama serve）")
+            return ""
+        except requests.exceptions.Timeout:
+            # 逾時重試只會再等一輪，直接放棄（可在 .env 調高 OLLAMA_TIMEOUT）
+            print(f"[OLLAMA] 逾時（>{OLLAMA_TIMEOUT}s），跳過；硬體較慢可調高 OLLAMA_TIMEOUT")
             return ""
         except Exception as e:
             print(f"[OLLAMA ERROR] 第{attempt+1}次嘗試失敗: {e}")
@@ -59,7 +63,12 @@ def check_ollama_available() -> bool:
         models = resp.json().get("models", [])
         model_names = [m["name"] for m in models]
         print(f"[OLLAMA] 可用模型：{model_names}")
-        return any(OLLAMA_MODEL.split(":")[0] in name for name in model_names)
+        # 完整名稱比對：只裝 gemma3:4b 但設定 gemma3:12b 時不能誤判為可用
+        want = OLLAMA_MODEL if ":" in OLLAMA_MODEL else f"{OLLAMA_MODEL}:latest"
+        ok   = want in model_names
+        if not ok and model_names:
+            print(f"[OLLAMA] ⚠️ 找不到模型 {want}，請執行：ollama pull {want}")
+        return ok
     except Exception:
         return False
 
@@ -415,27 +424,6 @@ def should_check_cognitive_warfare(title: str, content: str,
     return any(kw in text for kw in COG_WAR_RULE_INDICATORS)
 
 
-def detect_cognitive_warfare(title: str, content: str,
-                             source: str = "", rule_score: float = 0.0) -> dict:
-    """
-    偵測認知作戰/假訊息特徵
-    加入規則前置過濾，非必要不呼叫 Ollama
-    """
-    # 規則前置判斷
-    if not should_check_cognitive_warfare(title, content, source, rule_score):
-        return {"is_cog_war": False, "confidence": 0, "indicators": [], "skipped": True}
-
-    prompt   = f"標題：{title}\n內容：{content[:400]}"
-    response = ollama_generate(prompt, COGNITIVE_WARFARE_SYSTEM)
-    try:
-        clean  = re.sub(r'```json|```', '', response).strip()
-        result = json.loads(clean)
-        result["skipped"] = False
-        return result
-    except Exception:
-        return {"is_cog_war": False, "confidence": 0, "indicators": [], "skipped": False}
-
-
 def batch_detect_cognitive_warfare(news_list: list) -> dict:
     """
     批次偵測認知作戰：用單一 Ollama 呼叫分析多篇新聞
@@ -501,4 +489,4 @@ if __name__ == "__main__":
         print(f"威脅評分：{test['score']}")
         print(f"摘要：{test['summary']}")
     else:
-        print("[OLLAMA] ❌ 請先執行：ollama run gemma3:12b")
+        print(f"[OLLAMA] ❌ 請先執行：ollama pull {OLLAMA_MODEL}")

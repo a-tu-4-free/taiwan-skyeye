@@ -476,7 +476,16 @@ def check_intl_coverage_spike() -> Optional[dict]:
 # 7. 海底電纜異常
 # ==============================
 
+_last_cable_signature = None   # 上次觸發時的 (電纜, 狀態) 組合
+
+
 def check_cable_incident() -> Optional[dict]:
+    """
+    MODA 的障礙常持續數週～一年以上，若每 2 小時重觸發就會一直洗版
+    → 只有「異常電纜組合改變」（新增障礙/升級為中斷）才產生新異常；
+      組合不變時每 24 小時最多提醒一次
+    """
+    global _last_cable_signature
     SCRAPER = "cable_monitor"
     ATYPE   = "CABLE_INCIDENT"
 
@@ -487,7 +496,8 @@ def check_cable_incident() -> Optional[dict]:
     critical_cables = [c for c in cables
                        if c.status in ("中斷",) or "破壞" in (c.incident_type or "")]
     warning_cables  = [c for c in cables
-                       if c.status in ("異常", "維修中")]
+                       if c.status in ("障礙", "異常", "維修中")
+                       and c not in critical_cables]
 
     if critical_cables:
         severity = SEV_CRITICAL
@@ -498,11 +508,16 @@ def check_cable_incident() -> Optional[dict]:
         names    = "、".join(c.cable_name for c in warning_cables[:3])
         desc     = f"海底電纜異常：{names}（狀態：{warning_cables[0].status}）"
     else:
+        _last_cable_signature = None
         resolve_anomalies_by_type(SCRAPER, ATYPE)
         return None
 
-    if has_recent_anomaly(SCRAPER, ATYPE, hours=2):
+    signature = tuple(sorted((c.cable_name, c.status) for c in critical_cables + warning_cables))
+    recent    = has_recent_anomaly(SCRAPER, ATYPE, hours=24)
+    if recent and (_last_cable_signature is None or signature == _last_cable_signature):
+        _last_cable_signature = signature      # 重啟後第一次：接續既有狀態，不重推
         return None
+    _last_cable_signature = signature
 
     cable_list  = critical_cables or warning_cables
     cable_names = "、".join(c.cable_name for c in cable_list[:2])
