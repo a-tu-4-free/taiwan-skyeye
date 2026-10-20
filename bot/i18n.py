@@ -191,16 +191,3 @@ def t(key: str, user_id: int = 0, lang: str = "") -> str:
     effective_lang = lang or get_user_lang(user_id) or DEFAULT_LANG
     return TRANSLATIONS.get(effective_lang, TRANSLATIONS[DEFAULT_LANG]).get(key, key)
 
-
-def get_threat_level_text_i18n(score: float, user_id: int = 0) -> str:
-    lang = get_user_lang(user_id)
-    if score >= 8:
-        return t("level_critical", lang=lang)
-    elif score >= 6:
-        return t("level_high",     lang=lang)
-    elif score >= 4:
-        return t("level_elevated", lang=lang)
-    elif score >= 2:
-        return t("level_normal",   lang=lang)
-    else:
-        return t("level_calm",     lang=lang)

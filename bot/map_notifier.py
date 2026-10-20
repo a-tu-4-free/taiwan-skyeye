@@ -21,6 +21,10 @@ def _screenshot_html(html_path: str, output_path: str,
             browser = p.chromium.launch()
             page    = browser.new_page(viewport={"width": width, "height": height})
             page.goto(f"file:///{html_path.replace(os.sep, '/')}")
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)  # 等圖磚載完
+            except Exception:
+                pass
             page.wait_for_timeout(wait_ms)
             page.screenshot(path=output_path, full_page=False)
             browser.close()
@@ -44,7 +48,7 @@ def make_mnd_map(intrusion_data: dict) -> str:
     """
     import folium
     from maps.map_generator import (
-        _add_base_layers, _finalize_map,
+        _add_base_layers, _finalize_map, make_base_map,
         DIRECTION_COORDS, HIGH_THREAT_TYPES
     )
 
@@ -62,8 +66,7 @@ def make_mnd_map(intrusion_data: dict) -> str:
         (dir_coord[1] + 120.8) / 2
     ]
 
-    m      = folium.Map(location=center, zoom_start=7,
-                        tiles="CartoDB dark_matter", prefer_canvas=True)
+    m      = make_base_map(center, 7)
     layers = _add_base_layers(m)
 
     # 標記入侵事件
@@ -121,47 +124,20 @@ def make_mnd_map(intrusion_data: dict) -> str:
 def make_cable_map(cable_events: list) -> str:
     """
     生成電纜異常地圖截圖
-    cable_events: [{cable_name, status, incident_type}]
+    cable_events: [{cable_name | cable, status, incident_type}]
+    MODA 名稱（如「臺馬二號海纜( TDM2 )」）用 match_cable_name 對應到地圖 key 後加粗發光
     """
-    import folium
-    from maps.map_generator import _add_base_layers, _finalize_map, SUBMARINE_CABLES
+    from maps.map_generator import _add_base_layers, _finalize_map, make_base_map
+    from maps.cable_data import match_cable_name
 
-    # 把異常電纜名稱建成 set，方便查詢
-    anomaly_names = {e.get("cable_name", "") for e in cable_events}
-    anomaly_map   = {e.get("cable_name", ""): e for e in cable_events}
+    highlight = {
+        match_cable_name(e.get("cable_name") or e.get("cable") or "")
+        for e in cable_events
+    } - {""}
 
-    # 以台灣為中心，zoom 稍寬
-    m      = folium.Map(location=[23.5, 122.5], zoom_start=5,
-                        tiles="CartoDB dark_matter", prefer_canvas=True)
-    layers = _add_base_layers(m)
-
-    # 在 _add_base_layers 已畫電纜，這裡額外 highlight 異常電纜
-    for cable in SUBMARINE_CABLES:
-        name = cable["name"]
-        if name not in anomaly_names:
-            continue
-        event  = anomaly_map[name]
-        status = event.get("status", "異常")
-        color  = "#ff2222" if status == "中斷" else "#ff8800"
-
-        # 畫粗發光線條覆蓋在原來的電纜上
-        folium.PolyLine(
-            locations=cable["coords"],
-            color=color, weight=6, opacity=0.9,
-            tooltip=f"🚨 {name} — {status}"
-        ).add_to(layers["cable"])
-
-        # 中點警示 marker
-        mid = cable["coords"][len(cable["coords"]) // 2]
-        folium.Marker(
-            location=mid,
-            icon=folium.DivIcon(
-                html=f'<div style="font-size:20px;text-shadow:0 0 8px {color};">'
-                     f'{"⚡" if status=="中斷" else "⚠️"}</div>',
-                icon_size=(24, 24), icon_anchor=(12, 12)
-            ),
-            tooltip=f"{name}：{status}"
-        ).add_to(layers["cable"])
+    # 以台灣為中心，zoom 5 才看得到日本/香港兩端
+    m      = make_base_map([24.5, 124.0], 5)
+    layers = _add_base_layers(m, cable_highlight=highlight)
 
     _finalize_map(m, layers,
                   title=f"電纜異常警報",
@@ -187,10 +163,9 @@ def make_ais_map(suspicious_vessels: list) -> str:
     suspicious_vessels: [{name, lat, lon, flag, reason, zone}]
     """
     import folium
-    from maps.map_generator import _add_base_layers, _finalize_map
+    from maps.map_generator import _add_base_layers, _finalize_map, make_base_map
 
-    m      = folium.Map(location=[23.5, 121.5], zoom_start=6,
-                        tiles="CartoDB dark_matter", prefer_canvas=True)
+    m      = make_base_map([23.5, 121.5], 6)
     layers = _add_base_layers(m)
 
     for v in suspicious_vessels:
@@ -232,57 +207,6 @@ def make_ais_map(suspicious_vessels: list) -> str:
 # ==============================
 # CGA 海域事件地圖
 # ==============================
-def make_cga_map(incidents: list) -> str:
-    """
-    生成海巡事件地圖截圖
-    incidents: [{title, url, alert_level}]
-    """
-    import folium
-    from maps.map_generator import _add_base_layers, _finalize_map
-
-    # 關鍵地點座標對應
-    ISLAND_COORDS = {
-        "金門": [24.43, 118.32], "馬祖": [26.16, 119.93],
-        "東沙": [20.70, 116.72], "太平": [10.38, 114.36],
-        "澎湖": [23.57, 119.58], "烏坵": [24.99, 119.47],
-    }
-
-    m      = folium.Map(location=[23.5, 120.5], zoom_start=6,
-                        tiles="CartoDB dark_matter", prefer_canvas=True)
-    layers = _add_base_layers(m)
-
-    for inc in incidents:
-        title = inc.get("title", "")
-        level = inc.get("alert_level", "一般")
-        color = "#ff2222" if level == "高" else "#ff8800"
-
-        # 根據標題判斷事件位置
-        for island, coords in ISLAND_COORDS.items():
-            if island in title:
-                popup = f"<b>{'🔴' if level=='高' else '🟠'} {title[:50]}</b>"
-                folium.CircleMarker(
-                    location=coords, radius=9,
-                    color=color, fill=True, fill_color=color, fill_opacity=0.75,
-                    popup=folium.Popup(popup, max_width=200),
-                    tooltip=f"海巡：{island}"
-                ).add_to(layers["intrusion"])
-                break
-
-    _finalize_map(m, layers,
-                  title="海巡署事件地圖",
-                  window_desc=datetime.now().strftime("%Y-%m-%d %H:%M"))
-
-    ts        = datetime.now().strftime("%Y%m%d_%H%M")
-    html_path = os.path.join(OUTPUT_DIR, f"cga_{ts}.html")
-    png_path  = os.path.join(OUTPUT_DIR, f"cga_{ts}.png")
-    m.save(html_path)
-
-    result = _screenshot_html(html_path, png_path)
-    if result:
-        os.remove(html_path)
-    return result
-
-
 # ==============================
 # ADS-B 軍機動態地圖
 # ==============================
@@ -292,10 +216,9 @@ def make_adsb_map(aircraft_list: list) -> str:
     aircraft_list: [{callsign, category, lat, lon, alt_m, heading, zone, threat_level}]
     """
     import folium
-    from maps.map_generator import _add_base_layers, _finalize_map
+    from maps.map_generator import _add_base_layers, _finalize_map, make_base_map
 
-    m      = folium.Map(location=[23.5, 121.5], zoom_start=6,
-                        tiles="CartoDB dark_matter", prefer_canvas=True)
+    m      = make_base_map([23.5, 121.5], 6)
     layers = _add_base_layers(m)
 
     # 依類別決定顏色
@@ -313,8 +236,8 @@ def make_adsb_map(aircraft_list: list) -> str:
 
         callsign = ac.get("callsign") or "不明"
         category = ac.get("category", "")
-        alt_m    = ac.get("alt_m", 0)
-        heading  = ac.get("heading", 0)
+        alt_m    = ac.get("alt_m") or 0
+        heading  = ac.get("heading") or 0
         zone     = ac.get("zone", "")
         color    = CATEGORY_COLOR.get(category, "#ff8800")
 

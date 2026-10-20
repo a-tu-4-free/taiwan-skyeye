@@ -15,21 +15,20 @@ from telegram.constants import ParseMode
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID,
-    THREAT_ALERT_THRESHOLD, USE_WHITELIST, ALLOWED_USER_IDS
+    USE_WHITELIST, ALLOWED_USER_IDS
 )
 from database.db import (
     get_recent_news, get_intrusion_stats,
     get_all_cable_status, get_recent_scores,
-    get_unalerted_high_threat_news, mark_news_alerted
 )
 from analyzer.threat_score import run_daily_scoring, get_threat_level_emoji
 from analyzer.trend import run_all_charts
 from analyzer.ollama_client import (
-    generate_daily_report, generate_alert_message,
+    generate_daily_report,
     generate_weekly_report, check_ollama_available
 )
 from bot.formatter import (
-    format_daily_report, format_alert_message,
+    format_daily_report,
     format_weekly_report, format_threat_card,
     format_cable_status, format_vessel_alert,
     format_startup_message, format_anomaly_summary,
@@ -378,9 +377,7 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     intrusion_stats, _ = get_intrusion_stats(days=1)
     recent_news        = get_recent_news(hours=24)
 
-    from scrapers.satellite import get_latest_analysis
     from database.db import get_cog_war_news
-    threat_data["satellite_analysis"] = get_latest_analysis()
     threat_data["cog_war_news"]       = get_cog_war_news(hours=24)
 
     top_news = sorted(
@@ -395,7 +392,8 @@ async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ai_analysis = ""
     if check_ollama_available():
-        ai_analysis = generate_daily_report(
+        ai_analysis = await asyncio.to_thread(
+            generate_daily_report,
             news_summaries=top_news,
             intrusion_stats=intrusion_stats,
             threat_scores={
@@ -415,7 +413,7 @@ async def cmd_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/map — 傳送態勢地圖（HTML 檔案）"""
     await update.message.reply_text(_rt(update, "⏳ 生成地圖中...", "⏳ 生成地图中...", "⏳ Generating map..."))
     try:
-        map_path = generate_defense_map()
+        map_path = await asyncio.to_thread(generate_defense_map)
         with open(map_path, "rb") as f:
             await update.message.reply_document(
                 document=f,
@@ -468,7 +466,7 @@ async def cmd_cable(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/cable — 海底電纜狀態（已去重，只顯示每條電纜最新一筆）"""
     await update.message.reply_text(_rt(update, "⏳ 查詢電纜狀態...", "⏳ 查询电缆状态...", "⏳ Checking cable status..."))
     try:
-        cables = get_all_cable_status(days=90)
+        cables = get_all_cable_status()
         msg    = format_cable_status(cables)
         await _send_long_message(update, msg)
     except Exception as e:
@@ -577,7 +575,7 @@ async def cmd_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "peak_score":       peak.overall_score if peak else 0,
     }
 
-    ai_weekly = generate_weekly_report(weekly_data) if check_ollama_available() else ""
+    ai_weekly = (await asyncio.to_thread(generate_weekly_report, weekly_data)) if check_ollama_available() else ""
     msg       = format_weekly_report(weekly_data, ai_weekly)
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -778,7 +776,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "peak_day":         peak.date.strftime("%m/%d") if peak else "N/A",
                     "peak_score":       peak.overall_score if peak else 0,
                 }
-                ai_weekly = generate_weekly_report(weekly_data) if check_ollama_available() else ""
+                ai_weekly = (await asyncio.to_thread(generate_weekly_report, weekly_data)) if check_ollama_available() else ""
                 msg       = format_weekly_report(weekly_data, ai_weekly)
                 await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.HTML)
 
@@ -798,9 +796,7 @@ async def push_daily_report(bot: Bot):
         intrusion_stats, _ = get_intrusion_stats(days=1)
         recent_news        = get_recent_news(hours=24)
 
-        from scrapers.satellite import get_latest_analysis
         from database.db import get_cog_war_news
-        threat_data["satellite_analysis"] = get_latest_analysis()
         threat_data["cog_war_news"]       = get_cog_war_news(hours=24)
 
         top_news = sorted(
@@ -815,7 +811,8 @@ async def push_daily_report(bot: Bot):
 
         ai_analysis = ""
         if check_ollama_available():
-            ai_analysis = generate_daily_report(
+            ai_analysis = await asyncio.to_thread(
+                generate_daily_report,
                 news_summaries=top_news,
                 intrusion_stats=intrusion_stats,
                 threat_scores={
@@ -877,35 +874,23 @@ async def push_daily_report(bot: Bot):
         print(f"[BOT ERROR] push_daily_report: {e}")
 
 
-async def push_alerts(bot: Bot):
-    """掃描並推送即時高威脅警報"""
-    alerts = get_unalerted_high_threat_news(threshold=THREAT_ALERT_THRESHOLD)
-    for news in alerts:
-        try:
-            ai_alert = ""
-            if check_ollama_available():
-                ai_alert = generate_alert_message(
-                    news.title, news.content or "", news.threat_score or 0
-                )
-            msg = format_alert_message(
-                news.title, news.url or "",
-                news.threat_score or 0, ai_alert
-            )
-            await bot.send_message(
-                chat_id=TELEGRAM_CHANNEL_ID,
-                text=msg,
-                parse_mode=ParseMode.HTML   # 改用 HTML
-            )
-            mark_news_alerted(news.id)
-            print(f"[BOT] 警報推送：{news.title[:40]}")
-            await asyncio.sleep(2)
-        except Exception as e:
-            print(f"[BOT ERROR] push_alerts: {e}")
-
-
 # ==============================
 # Bot 啟動
 # ==============================
+
+async def _on_error(update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    全域錯誤處理：網路斷線（getaddrinfo / ConnectError）只印一行，
+    不再讓 PTB 每次把整段 traceback 寫進 log
+    """
+    from telegram.error import NetworkError, TimedOut
+    err = context.error
+    if isinstance(err, (NetworkError, TimedOut)):
+        print(f"[BOT] 網路錯誤（自動重試）：{str(err)[:80]}")
+        return
+    import logging
+    logging.getLogger("bot").error("未處理例外", exc_info=err)
+
 
 def build_app():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
@@ -927,6 +912,7 @@ def build_app():
     app.add_handler(CommandHandler("weekly",    cmd_weekly))
     app.add_handler(CommandHandler("refresh",   cmd_refresh))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_error_handler(_on_error)
 
     async def post_init(application):
         await application.bot.set_my_commands([
@@ -936,7 +922,7 @@ def build_app():
             ("anomaly",   "⚠️ 異常偵測歷史"),
             ("today",     "📋 今日完整報告"),
             ("history",   "📈 歷史威脅趨勢"),
-            ("satellite", "🛰️ 衛星影像分析"),
+            ("satellite", "🛰️ 衛星影像"),
             ("cable",     "🔌 海底電纜狀態"),
             ("vessel",    "🚢 可疑船隻"),
             ("map",       "🗺️ 態勢地圖"),

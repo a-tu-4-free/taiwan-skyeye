@@ -117,22 +117,6 @@ def _row(ax, label: str, value: str, y: float,
             fontweight='bold')
     return y - 0.09
 
-def _score_bar(ax, label: str, score: float, y: float,
-               max_score: float = 10.0, color: str = None):
-    ratio = min(score / max_score, 1.0)
-    color = color or (C_RED if ratio >= 0.7 else C_ORANGE if ratio >= 0.4 else C_GREEN)
-    # 背景條
-    ax.barh(y, 0.55, left=0.38, height=0.055,
-            color=BG_ACCENT, transform=ax.transAxes)
-    # 填充條
-    ax.barh(y, 0.55 * ratio, left=0.38, height=0.055,
-            color=color, alpha=0.85, transform=ax.transAxes)
-    ax.text(0.04, y, label, transform=ax.transAxes,
-            fontsize=9, color=C_TEXT_DIM, va='center')
-    ax.text(0.94, y, f"{score:.1f}", transform=ax.transAxes,
-            fontsize=9, color=color, fontweight='bold', va='center', ha='right')
-    return y - 0.10
-
 def _footer(ax, source: str, update_time: str = None):
     t = update_time or datetime.now().strftime("%Y-%m-%d %H:%M")
     ax.axhline(y=0.10, xmin=0.04, xmax=0.96, color=C_BORDER, linewidth=0.5)
@@ -159,59 +143,6 @@ DIRECTION_DESC = {
     "東部":  "台灣東部外海",
     "西":    "台灣海峽中段",
 }
-
-def _get_intrusion_context(aircraft_count: int,
-                           crossed: bool,
-                           current_date: str = None) -> dict:
-    """
-    從資料庫取得比較數據
-    回傳 {prev_count, monthly_crossings, month_total}
-    """
-    try:
-        from database.db import get_session
-        from database.models import IntrusionRecord
-        from datetime import datetime, timedelta
-        session = get_session()
-        try:
-            now    = datetime.now()
-            # 上一筆
-            prev = session.query(IntrusionRecord).order_by(
-                IntrusionRecord.date.desc()
-            ).offset(1).first()
-            prev_count = prev.aircraft_count if prev else None
-
-            # 本月越線次數
-            month_start = now.replace(day=1, hour=0, minute=0, second=0)
-            monthly_crossing = session.query(IntrusionRecord).filter(
-                IntrusionRecord.date >= month_start,
-                IntrusionRecord.crossed_median_line == True
-            ).count()
-
-            # 本月擾台總次數
-            month_total = session.query(IntrusionRecord).filter(
-                IntrusionRecord.date >= month_start
-            ).count()
-
-            return {
-                "prev_count":        prev_count,
-                "monthly_crossings": monthly_crossing,
-                "month_total":       month_total,
-            }
-        finally:
-            session.close()
-    except Exception:
-        return {"prev_count": None, "monthly_crossings": 0, "month_total": 0}
-
-
-def _parse_start_time(raw_text: str) -> str:
-    """從 raw_text 解析警巡開始時間，如「自0822時起」"""
-    import re
-    match = re.search(r'自(\d{4})時起', raw_text or "")
-    if match:
-        t = match.group(1)
-        return f"{t[:2]}:{t[2:]}起"
-    return ""
-
 
 def make_mnd_card(intrusion_data: dict) -> str:
     """
@@ -264,42 +195,10 @@ def make_mnd_card(intrusion_data: dict) -> str:
 # ==============================
 # 電纜異常卡片
 # ==============================
-CABLE_INFO = {
-    # 國際海纜
-    "APCN-2":      {"route": "淡水 → 香港 → 日本 → 韓國",     "len": "19000km",  "aliases": ["亞太2號", "亞太二號", "APCN2"]},
-    "EAC-C2C":     {"route": "八里 → 香港 → 日本",              "len": "36000km",  "aliases": ["東亞交匯一號", "EAC1"]},
-    "SMW3":        {"route": "頭城/枋山 → 日本 → 歐洲",        "len": "40000km",  "aliases": ["法新歐亞三號", "SMW-3"]},
-    "APG":         {"route": "頭城 → 香港 → 日本 → 東南亞",    "len": "10400km",  "aliases": ["亞太直達"]},
-    "TPE":         {"route": "淡水 → 日本 → 美國",              "len": "17700km",  "aliases": ["橫太平洋快速"]},
-    "NCP":         {"route": "頭城 → 日本 → 美國",              "len": "13600km",  "aliases": ["新橫太平洋"]},
-    "FASTER":      {"route": "淡水 → 日本 → 美國（Google）",    "len": "9000km",   "aliases": ["FASTER"]},
-    "PLCN":        {"route": "頭城 → 菲律賓 → 美國",            "len": "12900km",  "aliases": ["太平洋光纜"]},
-    "SJC":         {"route": "枋山 → 越南 → 香港",              "len": "8900km",   "aliases": ["東南亞日本"]},
-    "SJC2":        {"route": "淡水 → 日本 → 東南亞",            "len": "10500km",  "aliases": ["東南亞日本二號", "SJC-2"]},
-    "HKA":         {"route": "頭城 → 香港 → 東南亞（Meta）",    "len": "4000km",   "aliases": ["HKA"]},
-    "PCCS":        {"route": "枋山 → 菲律賓",                   "len": "6000km",   "aliases": ["PCCS"]},
-    "FLAG/FEA":    {"route": "台灣 → 菲律賓 → 關島",            "len": "28000km",  "aliases": ["FLAG", "FEA"]},
-    "TSE-1":       {"route": "淡水 → 福州（兩岸）",             "len": "260km",    "aliases": ["海峽光纜一號", "TSE"]},
-    # 國內海纜
-    "TDM2":        {"route": "石門 → 馬祖南竿",                 "len": "233km",    "aliases": ["臺馬二號", "台馬二號", "TDM-2"]},
-    "TM3":         {"route": "石門 → 馬祖南竿",                 "len": "233km",    "aliases": ["臺馬三號", "台馬三號", "TM-3"]},
-    "TDM4":        {"route": "石門 → 馬祖（2026完工）",         "len": "233km",    "aliases": ["臺馬四號", "台馬四號"]},
-    "TPCA":        {"route": "本島 → 澎湖",                     "len": "80km",     "aliases": ["台澎海纜", "臺澎"]},
-    "Taiwan Cable":{"route": "台灣周邊",                        "len": "N/A",      "aliases": []},
-}
-
 def _get_cable_info(name: str) -> dict:
-    """模糊比對電纜名稱"""
-    if name in CABLE_INFO:
-        return CABLE_INFO[name]
-    nu = name.upper().replace(" ", "")
-    for key, info in CABLE_INFO.items():
-        for alias in info.get("aliases", []):
-            if alias.upper().replace(" ", "") in nu or nu in alias.upper().replace(" ", ""):
-                return info
-        if key.replace("-","").upper() in nu or nu in key.replace("-","").upper():
-            return info
-    return {"route": "台灣周邊海域", "len": "N/A", "aliases": []}
+    """電纜路由/長度（統一由 maps/cable_data.py 提供）"""
+    from maps.cable_data import get_cable_info
+    return get_cable_info(name)
 
 def make_cable_card(cable_events: list) -> str:
     """
@@ -319,7 +218,7 @@ def make_cable_card(cable_events: list) -> str:
                     sev)
 
     for event in cable_events[:4]:
-        name   = event.get("cable_name", "未知")
+        name   = event.get("cable_name") or event.get("cable") or "未知"
         status = event.get("status", "異常")
         inc    = event.get("incident_type", "")
         info   = _get_cable_info(name)
@@ -332,12 +231,12 @@ def make_cable_card(cable_events: list) -> str:
         ax.text(0.04, y - 0.07, f"  {route}", transform=ax.transAxes,
                 fontsize=8, color=C_TEXT_DIM)
         status_txt = f"{status}" + (f"  ｜  {inc}" if inc else "") + \
-                     (f"  ｜  容量 {cap}" if cap and cap != "N/A" else "")
+                     (f"  ｜  全長 {cap}" if cap and cap != "N/A" else "")
         ax.text(0.04, y - 0.14, f"  狀態：{status_txt}", transform=ax.transAxes,
                 fontsize=8, color=st_color)
         y -= 0.22
 
-    _footer(ax, "MODA / SubTel Forum")
+    _footer(ax, "數位發展部 MODA")
     return _save(fig, "cable_alert")
 
 

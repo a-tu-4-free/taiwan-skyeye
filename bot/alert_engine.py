@@ -72,9 +72,16 @@ LEVEL_ICON = {
 }
 
 
+def _prune_triggered(today: str):
+    """_triggered_today 只保留當日 key，避免長期常駐記憶體無限成長"""
+    stale = {k for k in _triggered_today if k[:8].isdigit() and not k.startswith(today)}
+    _triggered_today.difference_update(stale)
+
+
 def check_instant_triggers(news_list: list) -> list:
     alerts = []
     today  = datetime.now().strftime("%Y%m%d")
+    _prune_triggered(today)
     for news in news_list:
         text = (news.title or "") + " " + (news.content or "")
         for trigger in INSTANT_TRIGGERS:
@@ -146,8 +153,8 @@ async def push_score_alerts(bot: Bot):
                 score    = news.threat_score or 0
                 ai_alert = ""
                 if check_ollama_available():
-                    ai_alert = generate_alert_message(
-                        news.title or "", news.content or "", score
+                    ai_alert = await asyncio.to_thread(
+                        generate_alert_message, news.title or "", news.content or "", score
                     )
 
                 header   = ("🚨🚨🚨 <b>緊急警報</b> 🚨🚨🚨"
@@ -186,7 +193,6 @@ async def push_ptt_hot(bot: Bot, threshold: int = 50):
     """推送 PTT 爆文"""
     try:
         from database.models import NewsEvent
-        from sqlalchemy import desc
         session  = get_session()
         cutoff   = datetime.now() - timedelta(hours=1)
         hot_news = session.query(NewsEvent).filter(
@@ -200,7 +206,7 @@ async def push_ptt_hot(bot: Bot, threshold: int = 50):
             match = re.search(r'推文:(\d+)', news.content or "")
             if not match or int(match.group(1)) < threshold:
                 continue
-            key = f"ptt_hot_{news.id}"
+            key = f"{datetime.now().strftime('%Y%m%d')}_ptt_hot_{news.id}"
             if key in _triggered_today:
                 continue
             _triggered_today.add(key)
@@ -306,43 +312,11 @@ async def push_cable_with_map(bot: Bot, cable_events: list):
 
     now_str = datetime.now().strftime("%m/%d %H:%M")
 
-    # 電纜起訖資訊（含 MODA 中文名稱對應）
-    CABLE_INFO = {
-        "APCN-2":      {"route": "台灣淡水 → 香港 → 日本 → 韓國",     "zh": ["亞太2號", "亞太二號", "APCN2"]},
-        "EAC1":        {"route": "台灣八里 → 香港 → 日本",              "zh": ["東亞交匯一號", "EAC1", "EAC-C2C"]},
-        "SMW3":        {"route": "台灣頭城/枋山 → 日本 → 歐洲",        "zh": ["法新歐亞三號", "SMW3", "SMW-3"]},
-        "APG":         {"route": "台灣頭城 → 香港 → 日本 → 東南亞",    "zh": ["亞太直達", "APG"]},
-        "TPE":         {"route": "台灣淡水 → 日本 → 美國",              "zh": ["橫太平洋快速", "TPE"]},
-        "NCP":         {"route": "台灣頭城 → 日本 → 美國",              "zh": ["新橫太平洋", "NCP"]},
-        "FASTER":      {"route": "台灣淡水 → 日本 → 美國（Google）",    "zh": ["FASTER"]},
-        "PLCN":        {"route": "台灣頭城 → 菲律賓 → 美國",            "zh": ["PLCN", "太平洋光纜"]},
-        "SJC":         {"route": "台灣枋山 → 越南 → 香港",              "zh": ["東南亞日本", "SJC"]},
-        "SJC2":        {"route": "台灣淡水 → 日本 → 東南亞",            "zh": ["東南亞日本二號", "SJC2", "SJC-2"]},
-        "HKA":         {"route": "台灣頭城 → 香港 → 東南亞（Meta）",    "zh": ["HKA"]},
-        "PCCS":        {"route": "台灣枋山 → 菲律賓",                   "zh": ["PCCS"]},
-        "TSE-1":       {"route": "台灣淡水 → 福州（兩岸直連）",         "zh": ["海峽光纜一號", "TSE", "TSE-1"]},
-        "FLAG/FEA":    {"route": "台灣 → 菲律賓 → 關島",                "zh": ["FLAG", "FEA"]},
-        "TDM2":        {"route": "台灣石門 → 馬祖南竿",                 "zh": ["臺馬二號", "台馬二號", "TDM2", "TDM-2"]},
-        "TM3":         {"route": "台灣石門 → 馬祖南竿",                 "zh": ["臺馬三號", "台馬三號", "TM3", "TM-3"]},
-        "TDM4":        {"route": "台灣石門 → 馬祖（2026年完工）",       "zh": ["臺馬四號", "台馬四號", "TDM4"]},
-        "TPCA":        {"route": "台灣本島 → 澎湖",                     "zh": ["台澎海纜", "臺澎", "TPCA"]},
-        "TSE（金廈）": {"route": "金門 → 廈門（兩岸）",                  "zh": ["金廈海纜", "金廈", "Cross Straits"]},
-    }
+    # 電纜路由資訊統一由 maps/cable_data.py 提供
+    from maps.cable_data import get_cable_info
 
     def get_cable_route(name: str) -> str:
-        """模糊比對電纜名稱，回傳路由說明"""
-        if name in CABLE_INFO:
-            return CABLE_INFO[name]["route"]
-        nu = name.upper().replace(" ", "").replace("（", "(").replace("）", ")")
-        for key, info in CABLE_INFO.items():
-            for alias in info["zh"]:
-                au = alias.upper().replace(" ", "")
-                if au in nu or nu in au:
-                    return info["route"]
-            ku = key.replace("-", "").replace(" ", "").upper()
-            if ku in nu or nu in ku:
-                return info["route"]
-        return "台灣周邊海域"
+        return get_cable_info(name)["route"]
 
     # 生成地圖
     map_png = ""
@@ -368,7 +342,7 @@ async def push_cable_with_map(bot: Bot, cable_events: list):
         "─" * 28,
     ]
     for e in cable_events[:3]:
-        name   = e.get("cable_name", "未知")
+        name   = e.get("cable_name") or e.get("cable") or "未知"
         status = e.get("status", "異常")
         inc    = e.get("incident_type", "")
         route   = get_cable_route(name)
@@ -378,7 +352,9 @@ async def push_cable_with_map(bot: Bot, cable_events: list):
             f"   路由：{route}",
             (f"   類型：{inc}" if inc else ""),
         ]
-    lines += ["─" * 28, "<i>來源：MODA / SubTel Forum</i>"]
+    if len(cable_events) > 3:
+        lines.append(f"…另有 {len(cable_events) - 3} 條，/cable 查看全部")
+    lines += ["─" * 28, "<i>來源：數位發展部 MODA 海纜障礙公告</i>"]
     caption = "\n".join(l for l in lines if l)
 
     try:
@@ -512,8 +488,8 @@ async def push_adsb_with_map(bot: Bot, aircraft_list: list, category: str):
         cs   = ac.get("callsign") or ""
         # 中共軍機通常關閉 ADS-B 識別，callsign 不廣播是正常現象
         cs_display = f"<code>{cs}</code>" if cs else "<code>─</code>（未廣播）"
-        alt  = f"{ac.get('alt_m', 0):.0f}m"
-        hdg  = f"{ac.get('heading', 0):.0f}°"
+        alt  = f"{(ac.get('alt_m') or 0):.0f}m"
+        hdg  = f"{(ac.get('heading') or 0):.0f}°"
         zone = ac.get("zone", "台海周邊")
         lines.append(f"  ✈ {cs_display} {zone}  {alt}  航向{hdg}")
 
@@ -557,7 +533,6 @@ async def push_gwytb_with_card(bot: Bot, escalations: list):
     except Exception as e:
         print(f"[ALERT] 國台辦卡片失敗：{e}")
 
-    max_int  = max(e.get("intensity", 0) for e in escalations)
     now_str  = datetime.now().strftime("%m/%d %H:%M")
     lines    = [
         f"📢 <b>國台辦措辭升溫</b>  <code>{now_str}</code>",
@@ -713,77 +688,6 @@ async def push_intl_with_card(bot: Bot, high_priority_news: list):
         print(f"[ALERT ERROR] push_intl: {e}")
 
 
-async def push_routine_status(bot: Bot, scrape_summary: dict):
-    """
-    例行掃描狀態推送
-    只有有新資料時才推（scheduler 已在上層判斷，此處直接推）
-    """
-    try:
-        from analyzer.threat_score import run_daily_scoring
-        from analyzer.anomaly_detector import get_current_anomaly_summary
-
-        threat  = run_daily_scoring()
-        overall = threat.get("overall", 0)
-        anomaly = get_current_anomaly_summary()
-
-        status_icon = "🔴" if overall >= 8 else "🟠" if overall >= 5 else "🟢"
-        sea_status  = "緊張" if overall >= 8 else "偏高" if overall >= 5 else "平穩"
-
-        total  = sum(scrape_summary.values())
-        now    = datetime.now().strftime("%H:%M")
-
-        # 異常摘要（有異常才顯示）
-        anomaly_part = ""
-        if anomaly.get("count", 0) > 0:
-            max_sev  = anomaly.get("max_severity", "LOW")
-            sev_icon = {"LOW": "⚪", "MEDIUM": "🟡", "HIGH": "🟠", "CRITICAL": "🔴"}.get(max_sev, "⚪")
-            top_item = anomaly["items"][0]
-            anomaly_part = (
-                f'\n{"─" * 28}\n'
-                f'{sev_icon} <b>活躍異常：{anomaly["count"]} 個</b>\n'
-                f'<i>{top_item["desc"][:60]}</i>'
-            )
-
-        # 取近2小時高分新聞作摘要連結
-        from database.db import get_recent_news
-        top_news = sorted(
-            get_recent_news(hours=2, min_threat_score=3.0),
-            key=lambda n: n.threat_score or 0, reverse=True
-        )[:3]
-        news_lines = ""
-        for n in top_news:
-            icon_n = "🔴" if (n.threat_score or 0) >= 7 else "🟠" if (n.threat_score or 0) >= 5 else "🟡"
-            title  = (n.title or "")[:45]
-            if n.url:
-                news_lines += f'\n{icon_n} <a href="{n.url}">{title}</a>'
-            else:
-                news_lines += f"\n{icon_n} {title}"
-
-        msg = (
-            f"{status_icon} <b>台灣國防情勢 — 例行更新</b>\n"
-            f'{"─" * 28}\n'
-            f"⏰ {now}｜新增 <b>{total}</b> 筆\n"
-            f"🏛️ 國防部 {scrape_summary.get('mnd', 0)} ｜ "
-            f"🚢 海巡 {scrape_summary.get('cga', 0)} ｜ "
-            f"💬 PTT {scrape_summary.get('ptt', 0)} ｜ "
-            f"🌐 國際 {scrape_summary.get('intl', 0)}\n"
-            f"🛡️ 威脅指數：<code>{overall:.1f}/10</code>  {sea_status}"
-            f"{anomaly_part}"
-            + (f"\n\n📰 <b>近期重點</b>{news_lines}" if news_lines else "")
-            + f'\n{"─" * 28}\n/status 詳情　/today 日報'
-        )
-
-        await bot.send_message(
-            chat_id=TELEGRAM_CHANNEL_ID,
-            text=msg,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
-        print("[ALERT] 例行狀態推送完成")
-    except Exception as e:
-        print(f"[ALERT ERROR] push_routine_status: {e}")
-
-
 async def push_daily_snapshot(bot: Bot):
     """
     推送當日地圖快照圖片（日報附圖）
@@ -791,7 +695,8 @@ async def push_daily_snapshot(bot: Bot):
     """
     try:
         from maps.map_generator import generate_snapshot_png
-        png_path = generate_snapshot_png(days=1)
+        # playwright sync API 不能在 asyncio loop 內直接呼叫，丟到 thread 執行
+        png_path = await asyncio.to_thread(generate_snapshot_png, None, 1)
         if not png_path or not os.path.exists(png_path):
             return
 
@@ -814,11 +719,11 @@ async def push_weekly_snapshot(bot: Bot):
     """推送 7 日熱力地圖快照（週報附圖）"""
     try:
         from maps.map_generator import generate_snapshot_png
-        png_path = generate_snapshot_png(days=7)
+        png_path = await asyncio.to_thread(generate_snapshot_png, None, 7)
         if not png_path or not os.path.exists(png_path):
             return
 
-        start = (datetime.now() - __import__("datetime").timedelta(days=7)).strftime("%m/%d")
+        start = (datetime.now() - timedelta(days=7)).strftime("%m/%d")
         end   = datetime.now().strftime("%m/%d")
         caption = f"🗺️ <b>本週態勢地圖</b>  {start}～{end}"
 
