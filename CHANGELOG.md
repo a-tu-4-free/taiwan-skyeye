@@ -21,6 +21,7 @@
 - **Ollama 呼叫卡住 Bot**：同步呼叫改在 thread 中執行，不再阻塞 TG 指令與其他排程。
 - **Ollama 模型檢查誤判**：改成完整名稱比對，找不到時提示要 pull 的模型。
 - 每週清理改用絕對路徑，並涵蓋 `map_shots/`、`cards/`。
+- **活躍異常累積上千筆**：同一類型的異常每次觸發都新增一筆、從不解除（電纜異常累積 1206 筆）。改為新紀錄取代同類舊紀錄，舊資料會在下次觸發時自動清掉。
 
 ### 新增
 - `OLLAMA_TIMEOUT`：Ollama 單次呼叫逾時（預設 180 秒），慢的硬體可以調高。
@@ -29,7 +30,12 @@
 - README 新增「硬體需求」與「地圖說明」。
 
 ### 變更
-- 預設模型 `gemma3:27b` 改為 `gemma3:12b`。
+- **TG 指令精簡**：只保留讀取資料庫或快取的輕量指令（`/summary` `/status` `/anomaly` `/history` `/cable` `/vessel` `/satellite` `/lang` `/help` `/start`），避免使用者的指令消耗主機資源。排程推送的日報、週報、地圖不受影響。
+  - 移除 `/today`、`/weekly`（會叫用 Ollama）、`/map`、`/trend`（會產生地圖和圖表）、`/refresh`（會立刻爬政府網站）、`/panel`（控制面板與按鈕回呼）。
+  - `/summary` 改為讀取已存的評分，不再重算。原本每次執行都會覆寫當日評分，還會清空排程寫入的 AI 研判。
+  - `/satellite` 改為只讀當日快取，不再額外呼叫 Google Maps API。
+  - 說明文字、啟動訊息、異常警報中的指令提示同步更新。
+- 預設模型 `gemma3:27b` 改為 `gemma3:12b`（1060 這類 6GB 顯卡建議用 `gemma3:4b`，見 README）。
 - `requirements.txt`：補上 `flask`、`playwright`；移除未使用的 `pandas`、`ollama`、`python-dateutil`、`pytz`、`py7zr`；版本改為下限，支援 Python 3.13。
 
 ### 移除
