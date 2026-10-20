@@ -259,10 +259,12 @@ def upsert_cable_status(cable_name, status, incident_type=None,
         session.close()
 
 
-def get_all_cable_status(days: int = 90):
+def get_all_cable_status(days: int = 400):
     """
     取得電纜狀態：每條電纜只取最新一筆，去除重複
-    days: 只看近 N 天的紀錄
+    days: MODA 紀錄看近 N 天（MODA 障礙表上的事件可能超過一年仍未修復，
+          修復後 cable_monitor 會補一筆「已修復」成為最新紀錄）
+    非 MODA 來源（新聞 RSS）只保留 30 天
     """
     session = get_session()
     try:
@@ -288,6 +290,7 @@ def get_all_cable_status(days: int = 90):
         KNOWN_CABLES = {
             "APCN-2", "EAC1", "EAC-C2C", "SMW3", "APG", "TPE", "NCP",
             "FASTER", "PLCN", "SJC", "SJC2", "HKA", "PCCS", "TSE-1",
+            "C2C", "E2A", "FNAL", "RNAL",
             "FLAG/FEA", "TDM2", "TM3", "TDM4", "TPCA", "TPCE", "TKC",
             "Taiwan Cable",
             # 中文名稱
@@ -309,6 +312,9 @@ def get_all_cable_status(days: int = 90):
                 return False
             return True
 
+        news_cutoff = datetime.now() - timedelta(days=30)
+        results  = [r for r in results
+                    if r.source == "MODA" or (r.reported_at and r.reported_at >= news_cutoff)]
         filtered = [r for r in results if is_known_cable(r.cable_name)]
         unknown  = [r for r in results if not is_known_cable(r.cable_name)]
 
