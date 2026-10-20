@@ -755,7 +755,7 @@ ABOUT_HTML = """
             <tr><td>船舶追蹤（AIS）</td><td>AISStream</td><td><span class="badge badge-hourly">2小時</span></td></tr>
             <tr><td>民船徵用偵測</td><td>AIS（兩棲基地周邊分析）</td><td><span class="badge badge-hourly">2小時</span></td></tr>
             <tr><td>海底電纜狀態</td><td>數位部 MODA 公告</td><td><span class="badge badge-hourly">4小時</span></td></tr>
-            <tr><td>衛星影像</td><td>Google Maps 衛星圖層</td><td><span class="badge badge-hourly">每日</span></td></tr>
+            <tr><td>衛星影像</td><td>Google Maps 衛星圖層（不做 AI 判讀）</td><td><span class="badge badge-hourly">每日</span></td></tr>
             <tr><td>中共官媒輿論</td><td>新華社／人民日報／環球時報／中新社／CGTN</td><td><span class="badge badge-hourly">2小時</span></td></tr>
             <tr><td>國台辦發言</td><td>國台辦官網</td><td><span class="badge badge-hourly">每小時</span></td></tr>
             <tr><td>國際媒體</td><td>國際軍事媒體 RSS</td><td><span class="badge badge-hourly">30分鐘</span></td></tr>
@@ -785,8 +785,8 @@ ABOUT_HTML = """
 
         <h3>AI 輔助分析</h3>
         <p>
-            部分項目（如軍機動態、官媒措辭、衛星影像）會透過 AI 模型
-            （Google Gemini，必要時搭配本地模型）進行初步研判，
+            部分項目（如軍機動態、官媒措辭）會透過 AI 模型
+            （本地 Ollama 模型，必要時以 Google Gemini 備援）進行初步研判，
             產出簡短的繁體中文說明。AI 分析僅作輔助參考，
             <strong>不作為唯一判斷依據</strong>，且分析時要求模型採取保守立場，
             避免過度推斷。
@@ -967,31 +967,12 @@ def api_dashboard():
 
         session = get_session()
         try:
-            # ── 電纜：每條只取最新一筆（去重）──────────────
-            from sqlalchemy import func
-            cutoff = datetime.now() - timedelta(days=90)
-            subq = session.query(
-                CableStatus.cable_name,
-                func.max(CableStatus.reported_at).label("latest")
-            ).filter(
-                CableStatus.reported_at >= cutoff
-            ).group_by(CableStatus.cable_name).subquery()
-
-            cables_db = session.query(CableStatus).join(
-                subq,
-                (CableStatus.cable_name == subq.c.cable_name) &
-                (CableStatus.reported_at == subq.c.latest)
-            ).order_by(desc(CableStatus.reported_at)).all()
-
-            # 過濾地理描述型名稱（如「距越南峴港約226公里處」）
-            def is_cable_name(name):
-                geo = ["公里", "距", "處斷纜", "附近", "km"]
-                return name and not any(g in name for g in geo)
-
+            # ── 電纜：與 /cable、地圖共用同一份查詢（每條取最新一筆）──
+            from database.db import get_all_cable_status
             cables = [
                 {"name": c.cable_name, "status": c.status,
                  "time": c.reported_at.strftime("%m/%d") if c.reported_at else ""}
-                for c in cables_db if is_cable_name(c.cable_name)
+                for c in get_all_cable_status()
             ]
 
             # ── 船隻：可疑軍艦（24小時）──────────────────
