@@ -174,7 +174,7 @@ def analyze_with_ollama(aircraft_list: list) -> str:
         return ""
 
     try:
-        from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+        from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT
 
         # 整理軍機資訊給 Ollama
         ac_desc = "\n".join([
@@ -202,7 +202,7 @@ def analyze_with_ollama(aircraft_list: list) -> str:
                 "stream": False,
                 "options": {"temperature": 0.3, "num_predict": 200}
             },
-            timeout=90
+            timeout=OLLAMA_TIMEOUT
         )
         if resp.status_code == 200:
             return resp.json().get("response", "")
@@ -215,12 +215,12 @@ def analyze_with_ollama(aircraft_list: list) -> str:
 def _analyze_with_gemini(aircraft_list: list, prompt: str) -> str:
     """Gemini 備援分析"""
     try:
-        from config import GEMINI_API_KEY
+        from config import GEMINI_API_KEY, GEMINI_MODEL
         if not GEMINI_API_KEY:
             return ""
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY}",
+            f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
             json={"contents": [{"parts": [{"text": prompt}]}],
                   "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300}},
             timeout=20
@@ -281,7 +281,7 @@ def run() -> list:
         }
         military.append(ac)
         print(f"[ADSB] ⚠️  {callsign} ({classification['category']}) "
-              f"@ {zone}  {alt_m:.0f}m  {heading:.0f}°")
+              f"@ {zone}  {ac['alt_m']:.0f}m  {ac['heading']:.0f}°")
 
     if not military:
         print("[ADSB] 無軍用/偵察機")
@@ -323,24 +323,6 @@ def run() -> list:
     )
 
     return military
-
-
-def get_recent_military_aircraft(hours: int = 6) -> list:
-    """取得近 N 小時的軍機偵測紀錄（供報告用）"""
-    from database.db import get_session
-    from database.models import NewsEvent
-    session = get_session()
-    try:
-        cutoff = datetime.now() - timedelta(hours=hours)
-        items  = session.query(NewsEvent).filter(
-            NewsEvent.source == "adsb_monitor",
-            NewsEvent.published_at >= cutoff
-        ).order_by(NewsEvent.published_at.desc()).all()
-        return [{"title": n.title, "content": n.content,
-                 "time": n.published_at.strftime("%H:%M")}
-                for n in items]
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

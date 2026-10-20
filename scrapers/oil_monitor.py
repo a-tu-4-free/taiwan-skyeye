@@ -174,40 +174,6 @@ def run() -> dict:
     }
 
 
-def get_oil_indicator() -> dict:
-    """
-    取得最新石油指標（供威脅評分和日報使用）
-    """
-    from database.models import NewsEvent
-    session = get_session()
-    try:
-        cutoff = datetime.now() - timedelta(days=40)  # 最近一個月的記錄
-        item   = session.query(NewsEvent).filter(
-            NewsEvent.source == "oil_monitor",
-            NewsEvent.published_at >= cutoff
-        ).order_by(NewsEvent.published_at.desc()).first()
-
-        if not item:
-            return {"level": "UNKNOWN", "note": "無最新數據"}
-
-        # 從 content 解析 level
-        content = item.content or ""
-        level   = "NORMAL"
-        for l in ["CRITICAL", "HIGH", "MEDIUM"]:
-            if f"|{l}|" in content:
-                level = l
-                break
-
-        return {
-            "level":   level,
-            "title":   item.title,
-            "content": content,
-            "updated": item.published_at.strftime("%Y-%m"),
-        }
-    finally:
-        session.close()
-
-
 if __name__ == "__main__":
     result = run()
     if result:

@@ -200,27 +200,6 @@ def fetch_ptt_board(board_name, board_url, max_pages=2):
     return results
 
 
-def fetch_ptt_article_content(url):
-    """
-    爬取 PTT 文章內文
-    用於高推文數文章的深度分析
-    """
-    try:
-        resp = requests.get(url, headers=PTT_HEADERS, timeout=REQUEST_TIMEOUT)
-        resp.encoding = "utf-8"
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        content_elem = soup.select_one("div#main-content")
-        if content_elem:
-            # 移除推文區塊
-            for tag in content_elem.select("div.push"):
-                tag.decompose()
-            return content_elem.get_text(strip=True, separator="\n")[:500]
-    except Exception:
-        pass
-    return ""
-
-
 def get_hot_articles(results, top_n=5):
     """取得高推文數文章"""
     return sorted(results, key=lambda x: x["push_count"], reverse=True)[:top_n]

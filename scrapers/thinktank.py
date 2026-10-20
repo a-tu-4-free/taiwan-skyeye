@@ -1,6 +1,7 @@
 # 檔案名稱：scrapers/thinktank.py
 # 功能說明：爬取頂級智庫 RSS，兩層過濾後丟給 Ollama 分析，異常推送 TG
 
+import asyncio
 import feedparser
 import requests
 import time
@@ -205,7 +206,7 @@ async def analyze_and_notify(anomaly_entries: list, bot=None):
 2. 對台灣安全的影響
 3. 威脅評估（低/中/高/緊急）"""
 
-            analysis = ollama_generate(prompt)
+            analysis = await asyncio.to_thread(ollama_generate, prompt)  # 不阻塞 event loop
             if not analysis:
                 continue
 

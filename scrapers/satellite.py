@@ -1,18 +1,14 @@
 # 檔案名稱：scrapers/satellite.py
-# 功能說明：用 Google Maps Static API 抓取衛星影像，Gemini AI 分析中共重點軍事基地
+# 功能說明：用 Google Maps Static API 抓取中共重點軍事基地衛星影像（每日輪替一處）
+#           AI 影像分析已停用（效果不穩定），僅推送原始影像
 
 import requests
-import base64
-import json
 import os
-import re
 import sys
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from config import GEMINI_API_KEY, GOOGLE_MAPS_API_KEY
-from database.db import insert_news
+from config import GOOGLE_MAPS_API_KEY
 
 # ==============================
 # 重點監控區域
@@ -58,7 +54,6 @@ WATCH_AREAS = [
 ]
 
 CACHE_DIR   = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "satellite")
-GEMINI_URL  = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent"
 
 
 # ==============================
@@ -142,127 +137,6 @@ def load_cached_image(area_name: str) -> bytes:
 
 
 # ==============================
-# Gemini 分析
-# ==============================
-
-def analyze_with_gemini(image_bytes: bytes, area_name: str, area_desc: str) -> dict:
-    """用 Gemini Flash 分析衛星影像"""
-    if not image_bytes:
-        return {"summary": "無影像資料", "threat_level": 0}
-
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    prompt = (
-        f"你是台灣國防情報分析師，分析中國解放軍基地衛星影像。\n"
-        f"分析區域：{area_name}\n區域說明：{area_desc}\n\n"
-        f"請分析這張 Google Maps 衛星影像，回報：\n"
-        f"1. 可見的軍事設施（跑道、停機坪、港口、艦艇、車輛等）\n"
-        f"2. 是否有異常集結或活動跡象\n"
-        f"3. 威脅評估（0-10分）\n"
-        f"4. 重要觀察事項\n\n"
-        f"請用繁體中文回答，格式：\n"
-        f"【設施狀況】...\n【異常跡象】...\n【威脅評分】X/10\n【重要觀察】...\n\n"
-        f"判斷需保守，避免過度推斷。"
-    )
-
-    try:
-        payload = {
-            "contents": [{"parts": [
-                {"inline_data": {"mime_type": "image/png", "data": image_b64}},
-                {"text": prompt}
-            ]}],
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 500}
-        }
-        resp = requests.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json=payload, timeout=30
-        )
-        if resp.status_code == 200:
-            text  = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            match = re.search(r'威脅評分[】\]]*\s*(\d+(?:\.\d+)?)/10', text)
-            score = float(match.group(1)) if match else 0
-            return {"summary": text, "threat_level": score,
-                    "area": area_name, "analyzed_at": datetime.now().isoformat()}
-        elif resp.status_code == 429:
-            print("[SAT] Gemini 429，切換 Ollama 備援...")
-            return analyze_with_ollama(image_bytes, area_name, area_desc)
-        else:
-            print(f"[SAT] Gemini 失敗：HTTP {resp.status_code}")
-            return analyze_with_ollama(image_bytes, area_name, area_desc)
-    except Exception as e:
-        print(f"[SAT ERROR] Gemini: {e}")
-        return {"summary": f"分析錯誤：{e}", "threat_level": 0}
-
-
-def analyze_with_ollama(image_bytes: bytes, area_name: str, area_desc: str) -> dict:
-    """Ollama 本地備援分析（llava 視覺模型）"""
-    try:
-        from config import OLLAMA_BASE_URL
-
-        # 自動選最佳視覺模型
-        model = "llava:7b"
-        try:
-            r = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
-            models = [m["name"] for m in r.json().get("models", [])]
-            for pref in ["llava", "moondream", "bakllava"]:
-                match = next((m for m in models if pref in m), None)
-                if match:
-                    model = match
-                    break
-        except Exception:
-            pass
-
-        print(f"[SAT] Ollama 備援，模型：{model}")
-        # 縮小圖片到 512x512，減少 llava 處理時間
-        try:
-            from PIL import Image
-            import io
-            img = Image.open(io.BytesIO(image_bytes))
-            img = img.convert("RGB")  # 統一轉 RGB，解決 palette mode 問題
-            img = img.resize((512, 512), Image.LANCZOS)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            image_bytes_small = buf.getvalue()
-            print(f"[SAT] 圖片縮小：{len(image_bytes)//1024}KB → {len(image_bytes_small)//1024}KB")
-        except ImportError:
-            image_bytes_small = image_bytes  # PIL 未安裝，直接用原圖
-        except Exception as e:
-            print(f"[SAT] 圖片縮小失敗：{e}，使用原圖")
-            image_bytes_small = image_bytes
-
-        image_b64 = base64.b64encode(image_bytes_small).decode("utf-8")
-        prompt = (
-            f"分析這張衛星影像，區域：{area_name}（{area_desc}）\n"
-            f"用繁體中文回答：\n"
-            f"【設施狀況】可見設施\n【威脅評分】X/10\n【重要觀察】簡短說明\n"
-            f"判斷保守。"
-        )
-        payload = {
-            "model": model, "prompt": prompt,
-            "images": [image_b64], "stream": False,
-            "options": {"temperature": 0.3, "num_predict": 300}
-        }
-        # CPU 跑 llava 很慢，timeout 設 60 秒
-        # 超時就跳過，等 Gemini 額度明天重置
-        resp = requests.post(
-            f"{OLLAMA_BASE_URL}/api/generate",
-            json=payload, timeout=60
-        )
-        if resp.status_code == 200:
-            text  = resp.json().get("response", "")
-            match = re.search(r'威脅評分[】\]]*\s*(\d+(?:\.\d+)?)/10', text)
-            score = float(match.group(1)) if match else 0
-            print(f"[SAT] Ollama 分析完成，威脅：{score}/10")
-            return {"summary": text, "threat_level": score,
-                    "area": area_name, "source": "ollama"}
-    except requests.exceptions.Timeout:
-        print("[SAT] Ollama timeout（CPU 跑 llava 太慢），等明天 Gemini 額度重置")
-    except Exception as e:
-        print(f"[SAT] Ollama 備援失敗：{e}")
-    return {"summary": "待 Gemini 分析（明日重置）", "threat_level": 0}
-
-
-# ==============================
 # 主執行函式
 # ==============================
 
@@ -304,21 +178,6 @@ def run(priority_only=True) -> list:
         "image_bytes":  image_bytes,
         "priority":     area["priority"],
     }]
-
-
-def get_latest_analysis() -> list:
-    from database.db import get_session
-    from database.models import NewsEvent
-    session = get_session()
-    try:
-        cutoff = datetime.now() - timedelta(hours=24)
-        items  = session.query(NewsEvent).filter(
-            NewsEvent.source == "satellite",
-            NewsEvent.published_at >= cutoff
-        ).all()
-        return [{"title": n.title, "content": n.content} for n in items]
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":

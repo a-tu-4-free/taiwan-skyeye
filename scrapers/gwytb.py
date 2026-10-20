@@ -159,30 +159,6 @@ def fetch_gwytb_page(url, page=1):
     return results
 
 
-def fetch_gwytb_article(url):
-    """爬取國台辦文章內文（用於深度分析）"""
-    try:
-        resp = requests.get(
-            url,
-            headers=REQUEST_HEADERS,
-            timeout=REQUEST_TIMEOUT + 5
-        )
-        resp.encoding = "utf-8"
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        content_elem = (
-            soup.select_one("div.TRS_Editor") or
-            soup.select_one("div.content") or
-            soup.select_one("div#content") or
-            soup.select_one("td.con")
-        )
-        if content_elem:
-            return content_elem.get_text(strip=True, separator="\n")
-    except Exception:
-        pass
-    return ""
-
-
 def run(fetch_history=False):
     """
     執行國台辦爬蟲

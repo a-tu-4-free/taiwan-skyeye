@@ -5,7 +5,7 @@ import requests
 import feedparser
 import urllib3
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import sys
 import os
@@ -57,13 +57,18 @@ def parse_roc_date(date_str: str) -> datetime:
 def save_cable_event(cable_name: str, status: str, incident_type: str,
                      location_desc: str, reported_at: datetime,
                      source: str, notes: str) -> bool:
-    """儲存電纜事件到資料庫"""
+    """
+    儲存電纜事件到資料庫
+    去重條件：同電纜 + 同一天 + 同狀態（同一天先障礙後斷纜仍會記錄）
+    """
     session = get_session()
     try:
-        # 檢查是否已存在相同事件（同電纜同日期）
+        day_start = reported_at.replace(hour=0, minute=0, second=0, microsecond=0)
         existing = session.query(CableStatus).filter(
             CableStatus.cable_name == cable_name,
-            CableStatus.reported_at >= reported_at.replace(hour=0, minute=0, second=0),
+            CableStatus.status     == status,
+            CableStatus.reported_at >= day_start,
+            CableStatus.reported_at <  day_start + timedelta(days=1),
         ).first()
 
         if existing:
@@ -89,9 +94,118 @@ def save_cable_event(cable_name: str, status: str, incident_type: str,
         session.close()
 
 
+def _cleanup_legacy_moda_rows():
+    """
+    舊版解析把欄位對錯（序號當日期、日期當障礙情形），寫入大量錯誤紀錄：
+      notes 以「預計修復：」開頭、reported_at = 爬取當天、狀態全是「障礙」
+    新版 notes 以「障礙情形：」開頭，這裡一次性刪掉舊格式（重複執行無副作用）
+    """
+    session = get_session()
+    try:
+        n = session.query(CableStatus).filter(
+            CableStatus.source == "MODA",
+            CableStatus.notes.like("預計修復：%"),
+        ).delete(synchronize_session=False)
+        session.commit()
+        if n:
+            print(f"[CABLE] 清除舊版錯誤解析紀錄 {n} 筆")
+    except Exception as e:
+        session.rollback()
+        print(f"[CABLE ERROR] 清理舊紀錄失敗：{e}")
+    finally:
+        session.close()
+
+
+def _classify_incident(text: str) -> tuple:
+    """障礙情形 → (status, incident_type)"""
+    if any(kw in text for kw in ["修復完成", "已修復", "已恢復"]):
+        status = "已修復"
+    elif any(kw in text for kw in ["斷纜", "中斷", "斷裂"]):
+        status = "中斷"
+    else:
+        status = "障礙"          # 部分芯線受損、電力異常等
+
+    if any(kw in text for kw in ["錨害", "拖錨", "下錨"]):
+        incident_type = "錨害"
+    elif "拖網" in text:
+        incident_type = "拖網"
+    elif any(kw in text for kw in ["疑似", "人為"]):
+        incident_type = "疑似人為"
+    elif "自然" in text or "地震" in text:
+        incident_type = "自然災害"
+    else:
+        incident_type = "不明原因"
+    return status, incident_type
+
+
+_ROC_DATE_RE = re.compile(r"^\d{2,4}\s*[/年.-]\s*\d{1,2}\s*[/月.-]\s*\d{1,2}")
+
+
+def _parse_moda_rows(table) -> list:
+    """
+    MODA 障礙表欄位：序號 | 海纜名稱 | 障礙發生日期 | 障礙情形 | 替代路由 | 預計修復日期
+    同一條電纜多筆障礙時，序號/名稱用 rowspan 合併 → 後續列只剩 4 欄
+    因此一律「從右邊對齊」取欄位，名稱缺少時沿用上一列
+    """
+    rows = []
+    last_name = ""
+    for tr in table.select("tr"):
+        cells = [td.get_text(" ", strip=True) for td in tr.select("td")]
+        if len(cells) < 4:
+            continue                      # 表頭（th）或空列
+        date_text, situation, alt_route, repair = cells[-4:]
+        if not _ROC_DATE_RE.match(date_text):
+            continue                      # 不是資料列
+        if len(cells) >= 5 and cells[-5]:
+            last_name = cells[-5]
+        if not last_name:
+            continue
+        rows.append({
+            "cable_name": last_name, "date": date_text, "situation": situation,
+            "alt_route": alt_route, "repair": repair,
+        })
+    return rows
+
+
+def _mark_repaired(current_names: set) -> list:
+    """
+    MODA 表只列「未修復」的障礙；之前有障礙、現在從表上消失的電纜 → 寫入「已修復」
+    （名稱用 match_cable_name 正規化，避免 MODA 改字造成誤判）
+    """
+    from sqlalchemy import desc
+    from maps.cable_data import match_cable_name
+    current_keys = {match_cable_name(n) or n for n in current_names}
+
+    session  = get_session()
+    repaired = []
+    try:
+        cutoff = datetime.now() - timedelta(days=400)
+        events = session.query(CableStatus).filter(
+            CableStatus.source == "MODA",
+            CableStatus.reported_at >= cutoff,
+        ).order_by(desc(CableStatus.reported_at), desc(CableStatus.id)).all()
+        latest = {}
+        for e in events:
+            key = match_cable_name(e.cable_name) or e.cable_name
+            latest.setdefault(key, e)
+    finally:
+        session.close()
+
+    for key, e in latest.items():
+        if e.status in ("中斷", "障礙", "異常") and key not in current_keys:
+            if save_cable_event(e.cable_name, "已修復", "修復完成", "",
+                                datetime.now(), "MODA",
+                                "障礙情形：已自 MODA 障礙表移除（視為修復完成）"):
+                repaired.append({"cable_name": e.cable_name, "cable": e.cable_name,
+                                 "status": "已修復", "source": "MODA"})
+                print(f"[CABLE] ✅ MODA：{e.cable_name} 已修復")
+    return repaired
+
+
 def fetch_moda_faults() -> list:
-    """爬取數位發展部海纜障礙公告"""
+    """爬取數位發展部海纜障礙公告（只回傳「新增」的事件）"""
     results = []
+    _cleanup_legacy_moda_rows()
     try:
         resp = requests.get(
             MODA_FAULT_URL,
@@ -102,78 +216,46 @@ def fetch_moda_faults() -> list:
         resp.encoding = "utf-8"
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # MODA 表格結構
         table = soup.select_one("table")
         if not table:
             print("[CABLE] MODA：找不到表格")
             return results
 
-        rows = table.select("tbody tr")
+        rows = _parse_moda_rows(table)
         print(f"[CABLE] MODA：找到 {len(rows)} 筆障礙記錄")
+        if not rows:
+            return results               # 解析不到就不要誤判成「全部已修復」
 
-        for row in rows:
-            cols = row.select("td")
-            if len(cols) < 4:
-                continue
-
-            # 欄位：障礙發生日期 | 電纜名稱 | 障礙情形 | 預計修復日期 | 替代路由
-            date_text   = cols[0].get_text(strip=True)
-            cable_name  = cols[1].get_text(strip=True) if len(cols) > 1 else "未知"
-            incident    = cols[2].get_text(strip=True) if len(cols) > 2 else ""
-            repair_date = cols[3].get_text(strip=True) if len(cols) > 3 else ""
-            alt_route   = cols[4].get_text(strip=True) if len(cols) > 4 else ""
-
-            # 嘗試取公告連結
-            link_elem   = row.select_one("a")
-            detail_url  = ""
-            if link_elem:
-                href = link_elem.get("href", "")
-                detail_url = f"https://moda.gov.tw{href}" if href.startswith("/") else href
-
-            reported_at = parse_roc_date(date_text)
-
-            # 判斷狀態
-            if "修復" in incident or "恢復" in incident:
-                status = "已修復"
-            elif "中斷" in incident or "故障" in incident:
-                status = "中斷"
-            else:
-                status = "障礙"
-
-            # 判斷是否疑似人為
-            incident_type = "不明原因"
-            if any(kw in incident for kw in ["錨害", "拖網"]):
-                incident_type = "錨害"
-            elif any(kw in incident for kw in ["疑似", "人為"]):
-                incident_type = "疑似人為"
-            elif "自然" in incident or "地震" in incident:
-                incident_type = "自然災害"
-
-            notes = f"預計修復：{repair_date} | 替代路由：{alt_route}"
-            if detail_url:
-                notes += f" | 公告：{detail_url}"
+        for r in rows:
+            status, incident_type = _classify_incident(r["situation"])
+            reported_at = parse_roc_date(r["date"])
+            notes = (f"障礙情形：{r['situation']} | 替代路由：{r['alt_route']}"
+                     f" | 預計修復：{r['repair']}")
 
             saved = save_cable_event(
-                cable_name    = cable_name or "台灣海纜",
+                cable_name    = r["cable_name"],
                 status        = status,
                 incident_type = incident_type,
-                location_desc = "",
+                location_desc = r["situation"][:300],
                 reported_at   = reported_at,
                 source        = "MODA",
-                notes         = notes
+                notes         = notes,
             )
-
             if saved:
                 results.append({
-                    "cable":    cable_name,
-                    "status":   status,
-                    "incident": incident,
-                    "date":     date_text,
-                    "source":   "MODA",
+                    "cable_name":    r["cable_name"],
+                    "cable":         r["cable_name"],
+                    "status":        status,
+                    "incident_type": incident_type,
+                    "incident":      r["situation"],
+                    "date":          r["date"],
+                    "source":        "MODA",
                 })
-                sabotage = any(kw in incident for kw in SABOTAGE_KEYWORDS)
-                icon = "🔴" if sabotage else "🟠"
-                print(f"[CABLE] {icon} MODA：{cable_name} - {incident[:40]}")
+                sabotage = any(kw in r["situation"] for kw in SABOTAGE_KEYWORDS)
+                icon = "🔴" if sabotage or status == "中斷" else "🟠"
+                print(f"[CABLE] {icon} MODA：{r['cable_name']} - {r['situation'][:40]}")
+
+        results.extend(_mark_repaired({r["cable_name"] for r in rows}))
 
     except Exception as e:
         print(f"[CABLE ERROR] MODA：{e}")
@@ -185,7 +267,9 @@ def fetch_subtel_forum() -> list:
     """爬取 SubTel Forum RSS（英文）"""
     results = []
     try:
-        feed    = feedparser.parse(SUBTEL_RSS)
+        # feedparser 抓網址沒有 timeout，網路卡住會讓整個排程永遠掛住 → 先用 requests 抓
+        resp    = requests.get(SUBTEL_RSS, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT)
+        feed    = feedparser.parse(resp.content)
         entries = feed.entries
 
         if not entries:
@@ -216,7 +300,7 @@ def fetch_subtel_forum() -> list:
             if hasattr(entry, "published_parsed") and entry.published_parsed:
                 published_at = datetime.fromtimestamp(t.mktime(entry.published_parsed))
 
-            status        = "中斷" if any(kw in text.lower() for kw in ["cut", "fault", "break"]) else "異常"
+            status        = "中斷" if re.search(r"\b(cut|severed|fault|break)\b", text.lower()) else "異常"
             incident_type = "疑似人為" if sabotage else "不明原因"
 
             saved = save_cable_event(
@@ -231,6 +315,7 @@ def fetch_subtel_forum() -> list:
 
             if saved:
                 results.append({
+                    "cable_name": "Taiwan Cable",
                     "cable":  "Taiwan Cable",
                     "status": status,
                     "title":  title,
@@ -295,7 +380,6 @@ def get_cable_summary() -> dict:
     """取得電纜狀態摘要"""
     session = get_session()
     try:
-        from datetime import timedelta
         from sqlalchemy import desc
 
         cutoff  = datetime.now() - timedelta(days=30)

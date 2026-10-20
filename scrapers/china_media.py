@@ -225,7 +225,7 @@ def analyze_with_ollama(high_articles: list) -> str:
     if not high_articles:
         return ""
     try:
-        from config import OLLAMA_BASE_URL, OLLAMA_MODEL
+        from config import OLLAMA_BASE_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT
         articles_text = "\n".join([
             f"- [{a['source']}] {a['title']}"
             for a in high_articles[:5]
@@ -248,7 +248,7 @@ def analyze_with_ollama(high_articles: list) -> str:
                 "stream":  False,
                 "options": {"temperature": 0.3, "num_predict": 200}
             },
-            timeout=60
+            timeout=OLLAMA_TIMEOUT
         )
         if resp.status_code == 200:
             return resp.json().get("response", "")
@@ -257,12 +257,12 @@ def analyze_with_ollama(high_articles: list) -> str:
 
     # Gemini 備援
     try:
-        from config import GEMINI_API_KEY
+        from config import GEMINI_API_KEY, GEMINI_MODEL
         if not GEMINI_API_KEY:
             return ""
         resp = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-2.0-flash-lite:generateContent?key={GEMINI_API_KEY}",
+            f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
             json={
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": 0.3, "maxOutputTokens": 300}
@@ -305,29 +305,6 @@ def run() -> list:
             print(f"[CMEDIA] 分析：{analysis[:100]}")
 
     return all_results
-
-
-def get_recent_rhetoric(hours: int = 24) -> dict:
-    """取得近 N 小時的措辭統計（供日報使用）"""
-    from database.models import NewsEvent
-    session = get_session()
-    try:
-        cutoff = datetime.now() - timedelta(hours=hours)
-        items  = session.query(NewsEvent).filter(
-            NewsEvent.source.in_(list(SOURCES.keys())),
-            NewsEvent.published_at >= cutoff
-        ).all()
-
-        total  = len(items)
-        l2     = sum(1 for n in items if "|L2|" in (n.content or ""))
-        l3     = sum(1 for n in items if "|L3|" in (n.content or ""))
-
-        return {
-            "total": total, "high": l2, "critical": l3,
-            "score": min((l2 * 2 + l3 * 4), 10.0)
-        }
-    finally:
-        session.close()
 
 
 if __name__ == "__main__":
