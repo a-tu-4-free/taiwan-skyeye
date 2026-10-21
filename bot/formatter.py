@@ -2,6 +2,7 @@
 # 功能說明：將分析結果格式化為 Telegram 訊息
 
 import re
+import html
 from datetime import datetime
 from analyzer.threat_score import get_threat_level_emoji, get_threat_level_text
 try:
@@ -63,13 +64,15 @@ def format_daily_report(threat_data: dict, ai_analysis: str,
         f"{SEP}\n"
     )
 
-    # 認知作戰警示
+    # 認知作戰：事實查核機構確認的涉兩岸／國防不實訊息（附原文連結）
     if cog_war_news:
-        msg += f"\n🧠 {b(f'認知作戰警示 ({len(cog_war_news)}則)')}\n"
+        org = {"factcheck_tfc": "TFC", "factcheck_mygopen": "MyGoPen"}
+        msg += f"\n🧠 {b(f'認知作戰：查核機構確認 {len(cog_war_news)} 則不實訊息')}\n"
         for cw in cog_war_news[:3]:
-            title = (cw.title or "")[:45]
-            src   = cw.source or ""
-            msg  += f"⚠️ {title} <code>{src}</code>\n"
+            title = html.escape((cw.title or "")[:45])
+            src   = org.get(cw.source, cw.source or "")
+            msg  += (f'• <a href="{cw.url}">{title}</a> <code>{src}</code>\n'
+                     if cw.url else f"• {title} <code>{src}</code>\n")
         msg += f"{SEP}\n"
 
     # 重點新聞（含摘要）
@@ -103,8 +106,7 @@ def format_daily_report(threat_data: dict, ai_analysis: str,
 
     news_count = threat_data.get('news_count', 0)
     msg += f"\n📊 今日監測新聞：{news_count} 則\n"
-    msg += "🗺️ 態勢地圖：/map\n"
-    msg += "📈 趨勢圖：/trend"
+    msg += "⚡ 即時摘要：私訊 Bot 輸入 /summary"
 
     return msg.strip()
 
@@ -133,8 +135,22 @@ def format_weekly_report(weekly_data: dict, ai_weekly: str) -> str:
         f"{SEP}\n\n"
         f"🤖 {b('週報分析：')}\n{ai_weekly}\n"
         f"{SEP}\n"
-        f"📈 /trend 查看趨勢圖　🗺️ /map 查看地圖"
     )
+
+    # 認知作戰週統計
+    if "cog_war_count" in weekly_data:
+        msg += f"\n🧠 {b('認知作戰')}\n"
+        msg += f"查核機構確認涉兩岸／國防不實訊息：<code>{weekly_data['cog_war_count']}</code> 則\n"
+        for t in weekly_data.get("cog_war_top", []):
+            msg += f"• {html.escape((t or '')[:40])}\n"
+        narr = weekly_data.get("narratives", [])
+        if narr:
+            msg += "對台說法熱度（官媒／台灣討論）：\n"
+            for n in narr:
+                msg += f"• {n['name']}：{n['cn_7d']}／{n['tw_7d']}\n"
+        msg += f"<i>說法熱度為關鍵字統計，不代表個別文章或發文者立場</i>\n{SEP}\n"
+
+    msg += "📈 /history 查看威脅指數歷史"
     return msg.strip()
 
 
@@ -296,7 +312,7 @@ def format_anomaly_alert(anomaly: dict) -> str:
                 "MEDIUM":   "一般警示", "LOW":  "低度關注"}.get(severity, "警示")
 
     type_title = {
-        "COG_WAR_SPIKE":        "認知作戰比例異常",
+        "COG_WAR_SPIKE":        "認知作戰升溫",
         "MEDIAN_LINE_CROSS":    "共軍越越海峽中線",
         "VESSEL_CLUSTER":       "共艦異常聚集",
         "AIRCRAFT_SURGE":       "共機大規模擾台",
@@ -320,14 +336,14 @@ def format_anomaly_alert(anomaly: dict) -> str:
     lines += ["", SEP]
 
     action = {
-        "COG_WAR_SPIKE":       "/today 查看今日認知作戰新聞",
-        "MEDIAN_LINE_CROSS":   "/map 查看台海態勢地圖",
+        "COG_WAR_SPIKE":       "/anomaly 查看異常詳情",
+        "MEDIAN_LINE_CROSS":   "/summary 查看今日摘要",
         "VESSEL_CLUSTER":      "/vessel 查看可疑船隻清單",
-        "AIRCRAFT_SURGE":      "/map 查看擾台路線",
-        "PTT_SURGE":           "/today 查看熱議文章",
-        "INTL_COVERAGE_SPIKE": "/today 查看國際報導",
+        "AIRCRAFT_SURGE":      "/summary 查看今日摘要",
+        "PTT_SURGE":           "/anomaly 查看異常詳情",
+        "INTL_COVERAGE_SPIKE": "/anomaly 查看異常詳情",
         "CABLE_INCIDENT":      "/cable 查看電纜狀態",
-        "GWYTB_ESCALATION":    "/today 查看國台辦聲明",
+        "GWYTB_ESCALATION":    "/anomaly 查看異常詳情",
     }.get(atype, "/status 查看完整狀態")
 
     lines.append(f"<i>{action}</i>")
@@ -391,7 +407,7 @@ def format_morning_brief(threat_data: dict, anomaly_summary: dict,
     lines += [
         "",
         SEP,
-        "<i>/today 完整日報  /map 態勢地圖  /anomaly 異常詳情</i>",
+        "<i>/summary 快速摘要  /anomaly 異常詳情</i>",
     ]
     return "\n".join(lines)
 
@@ -401,6 +417,8 @@ def format_project_intro() -> str:
     /start 指令與頻道介紹訊息
     給新加入的訂閱者了解這個專案在做什麼
     """
+    from config import TELEGRAM_BOT_USERNAME
+    bot_ref = f" @{TELEGRAM_BOT_USERNAME} " if TELEGRAM_BOT_USERNAME else "本 Bot"
     sep = "─" * 28
     return (
         f"🛡️ {b('SkyEye 台灣國防情勢監控')}\n"
@@ -434,7 +452,7 @@ def format_project_intro() -> str:
         f"{sep}\n"
         f"💬 {b('如何使用指令？')}\n"
         f"頻道為單向廣播，無法輸入指令。\n"
-        f"請直接私訊 @taiwandefence_bot，即可使用 /status、/today、/map 等所有查詢功能。\n\n"
+        f"請直接私訊{bot_ref}，即可使用 /summary、/status、/cable 等查詢功能。\n\n"
         f"輸入 /help 查看所有指令"
     )
 
@@ -448,13 +466,10 @@ def format_startup_message() -> str:
         f"SkyEye v2.0（台灣國防情勢監控）\n"
         f"啟動時間：{now_str}\n\n"
         f"📋 {b('可用指令')}\n"
+        f"/summary — 快速摘要\n"
         f"/status — 目前威脅指數\n"
-        f"/today — 今日完整報告\n"
-        f"/map — 傳送態勢地圖\n"
-        f"/trend — 趨勢圖表\n"
         f"/cable — 電纜狀態\n"
         f"/vessel — 可疑船隻\n"
-        f"/weekly — 本週週報\n"
         f"/help — 指令說明\n"
         f"{SEP}\n"
         f"監控中 🔍"
