@@ -758,6 +758,7 @@ ABOUT_HTML = """
             <tr><td>衛星影像</td><td>Google Maps 衛星圖層（不做 AI 判讀）</td><td><span class="badge badge-hourly">每日</span></td></tr>
             <tr><td>中共官媒輿論</td><td>新華社／人民日報／環球時報／中新社／CGTN</td><td><span class="badge badge-hourly">2小時</span></td></tr>
             <tr><td>國台辦發言</td><td>國台辦官網</td><td><span class="badge badge-hourly">每小時</span></td></tr>
+            <tr><td>認知作戰</td><td>台灣事實查核中心／MyGoPen 查核結果＋官媒說法比對</td><td><span class="badge badge-hourly">3小時</span></td></tr>
             <tr><td>國際媒體</td><td>國際軍事媒體 RSS</td><td><span class="badge badge-hourly">30分鐘</span></td></tr>
             <tr><td>智庫分析</td><td>主要國際智庫報告</td><td><span class="badge badge-hourly">2小時</span></td></tr>
             <tr><td>輿論熱度</td><td>PTT 軍武板</td><td><span class="badge badge-hourly">30分鐘</span></td></tr>
@@ -780,7 +781,7 @@ ABOUT_HTML = """
             <li>海底電纜出現障礙或中斷公告</li>
             <li>中共官媒對台措辭明顯升溫（強硬用詞、官方警告）</li>
             <li>解放軍兩棲基地周邊出現民船異常聚集</li>
-            <li>認知作戰相關內容比例異常升高</li>
+            <li>事實查核機構短時間確認多則涉兩岸／國防不實訊息，或中共官媒說法在台灣討論中明顯升溫（認知作戰）</li>
         </ul>
 
         <h3>AI 輔助分析</h3>
@@ -989,17 +990,14 @@ def api_dashboard():
                 "lon":    v.longitude or 0,
             } for v in vessels_db]
 
-            # ── 認知作戰 ──────────────────────────────────
-            cogcutoff = datetime.now() - timedelta(hours=24)
-            cog_db    = session.query(NewsEvent).filter(
-                NewsEvent.fetched_at >= cogcutoff,
-                NewsEvent.content.like("%[COG_WAR:True%")
-            ).order_by(desc(NewsEvent.fetched_at)).limit(5).all()
+            # ── 認知作戰：近 3 天事實查核機構確認的不實訊息 ────────
+            from database.db import get_cog_war_news
+            _org = {"factcheck_tfc": "台灣事實查核中心", "factcheck_mygopen": "MyGoPen"}
             cog_war = [{
                 "title":  (n.title or "")[:60],
-                "source": n.source or "",
+                "source": _org.get(n.source, n.source or ""),
                 "url":    n.url or "",
-            } for n in cog_db]
+            } for n in get_cog_war_news(hours=72)[:5]]
 
             # ── ADS-B 軍機（最近6小時）────────────────────
             adsb_cutoff = datetime.now() - timedelta(hours=6)
