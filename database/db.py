@@ -330,33 +330,18 @@ def get_all_cable_status(days: int = 400):
 # 認知作戰
 # ==============================
 
-def update_news_cog_war(news_id: int, is_cog_war: bool, confidence: int, indicators: list):
-    """更新新聞的認知作戰偵測結果"""
-    session = get_session()
-    try:
-        news = session.query(NewsEvent).filter_by(id=news_id).first()
-        if news:
-            cog_note = f"[COG_WAR:{is_cog_war}|{confidence}%|{'|'.join(indicators[:3])}]"
-            if news.content and "[COG_WAR:" not in news.content:
-                news.content = news.content + " " + cog_note
-            elif not news.content:
-                news.content = cog_note
-            session.commit()
-    except Exception as e:
-        session.rollback()
-    finally:
-        session.close()
-
-
 def get_cog_war_news(hours: int = 24) -> list:
-    """取得近N小時疑似認知作戰的新聞"""
+    """
+    認知作戰：近 N 小時事實查核機構確認的不實訊息（scrapers/factcheck.py）
+    用 published_at（查核發布時間），避免首次抓取的舊報告被當成今日新增
+    """
     session = get_session()
     try:
         cutoff = datetime.now() - timedelta(hours=hours)
         return session.query(NewsEvent).filter(
-            NewsEvent.fetched_at >= cutoff,
-            NewsEvent.content.like("%[COG_WAR:True%")
-        ).order_by(desc(NewsEvent.fetched_at)).all()
+            NewsEvent.source.like("factcheck_%"),
+            NewsEvent.published_at >= cutoff,
+        ).order_by(desc(NewsEvent.published_at)).all()
     finally:
         session.close()
         
