@@ -193,9 +193,9 @@ def rule_based_score(title: str, content: str, source: str = "") -> dict:
     light_threshold = 2.0 if source == "gwytb" else 3.0
 
     if score >= 6.0:
-        ai_mode = "full"       # 完整分析 + 認知作戰偵測
+        ai_mode = "full"       # 完整分析
     elif score >= light_threshold:
-        ai_mode = "light"      # 只做摘要，不做認知作戰
+        ai_mode = "light"      # 只做簡短摘要
     else:
         ai_mode = "skip"       # 不進 Ollama
 
@@ -380,102 +380,6 @@ def generate_weekly_report(weekly_data: dict) -> str:
 請生成本週台灣國防情勢週報：
 """
     return ollama_generate(prompt, WEEKLY_SYSTEM)
-
-
-# ==============================
-# 認知作戰偵測
-# ==============================
-
-COGNITIVE_WARFARE_SYSTEM = """你是資訊戰與認知作戰分析專家。
-分析這則新聞是否具有認知作戰特徵（假訊息、誇大、製造恐慌、統戰敘事）。
-只回傳 JSON，不要其他文字：
-{"is_cog_war": true/false, "confidence": 0-100, "indicators": ["指標1", "指標2"]}"""
-
-# 認知作戰規則前置過濾關鍵字
-# 出現這些特徵才值得送 Ollama 偵測
-COG_WAR_RULE_INDICATORS = [
-    # 統戰敘事
-    "兩岸一家", "中國人", "台獨", "分裂", "祖國",
-    # 製造恐慌
-    "必然", "不可避免", "滅亡", "崩潰", "完蛋",
-    # 假訊息特徵
-    "據悉", "消息人士", "內部文件", "獨家", "秘密",
-    # 誇大威脅
-    "全面封鎖", "即將開戰", "已部署", "隨時",
-]
-
-COG_WAR_TRUSTED_SOURCES = ["mnd", "cga", "gov_tw"]  # 官方來源不做認知作戰偵測
-
-
-def should_check_cognitive_warfare(title: str, content: str,
-                                   source: str = "", rule_score: float = 0.0) -> bool:
-    """
-    規則前置判斷：是否值得跑 Ollama 認知作戰偵測
-    官方來源 / 低分新聞 / 無任何指標 → 直接跳過
-    """
-    # 官方來源不做偵測
-    if source in COG_WAR_TRUSTED_SOURCES:
-        return False
-    # 規則分太低也跳過
-    if rule_score < 3.0:
-        return False
-    # 檢查是否有任何認知作戰指標
-    text = (title or "") + (content[:300] if content else "")
-    return any(kw in text for kw in COG_WAR_RULE_INDICATORS)
-
-
-def batch_detect_cognitive_warfare(news_list: list) -> dict:
-    """
-    批次偵測認知作戰：用單一 Ollama 呼叫分析多篇新聞
-    適合每小時排程使用，取代逐篇呼叫
-    回傳 {news_id: result_dict}
-    """
-    # 先用規則過濾，只送有指標的新聞
-    candidates = [
-        n for n in news_list
-        if should_check_cognitive_warfare(
-            n.title, n.content or "",
-            n.source or "", n.threat_score or 0.0
-        )
-    ]
-
-    if not candidates:
-        return {}
-
-    # 每次最多送 5 篇，避免 context 太長
-    candidates = candidates[:5]
-
-    news_text = "\n".join([
-        f"[{i+1}] 來源:{n.source} 標題:{n.title}"
-        for i, n in enumerate(candidates)
-    ])
-
-    batch_system = """你是資訊戰分析專家。
-分析以下新聞是否具有認知作戰特徵。
-只回傳 JSON 陣列，不要其他文字：
-[{"id": 編號, "is_cog_war": true/false, "confidence": 0-100, "indicators": ["指標"]}]"""
-
-    response = ollama_generate(news_text, batch_system)
-
-    results = {}
-    try:
-        clean   = re.sub(r'```json|```', '', response).strip()
-        parsed  = json.loads(clean)
-        for item in parsed:
-            idx = item.get("id", 0) - 1
-            if 0 <= idx < len(candidates):
-                results[candidates[idx].id] = {
-                    "is_cog_war": item.get("is_cog_war", False),
-                    "confidence": item.get("confidence", 0),
-                    "indicators": item.get("indicators", []),
-                }
-    except Exception as e:
-        print(f"[OLLAMA] 批次認知作戰解析失敗：{e}")
-
-    saved = len([v for v in results.values() if v.get("is_cog_war")])
-    print(f"[OLLAMA] 批次認知作戰：{len(candidates)} 篇候選，{saved} 篇確認，"
-          f"節省 {len(news_list) - len(candidates)} 次呼叫")
-    return results
 
 
 if __name__ == "__main__":

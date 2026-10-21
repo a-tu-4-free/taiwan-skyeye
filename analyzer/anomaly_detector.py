@@ -46,21 +46,6 @@ def _news_in_window(start: datetime, end: datetime) -> list:
         session.close()
 
 
-def _get_daily_cog_war_ratio(days: int = 14) -> list:
-    ratios = []
-    for i in range(days, 0, -1):
-        start = datetime.now() - timedelta(days=i)
-        end   = datetime.now() - timedelta(days=i - 1)
-        news  = _news_in_window(start, end)
-        total = len(news)
-        if total == 0:
-            ratios.append(0.0)
-            continue
-        cog = sum(1 for n in news if n.content and "[COG_WAR:True" in n.content)
-        ratios.append(cog / total)
-    return ratios
-
-
 def _get_daily_news_counts(source: str, days: int = 14) -> list:
     counts = []
     for i in range(days, 0, -1):
@@ -83,61 +68,56 @@ def _get_daily_news_counts(source: str, days: int = 14) -> list:
 
 
 # ==============================
-# 1. 認知作戰比例異常
+# 1. 認知作戰（事實查核 + 說法比對）
 # ==============================
 
 def check_cog_war_spike() -> Optional[dict]:
-    SCRAPER   = "all"
-    ATYPE     = "COG_WAR_SPIKE"
-    WARN_MULT = 1.5
-    CRIT_MULT = 2.0
-    WARN_ABS  = 0.15
-    CRIT_ABS  = 0.25
+    """
+    認知作戰（不用 AI，兩種訊號擇一）：
+    1. 事實查核機構 24 小時內確認 ≥ 3 則涉兩岸／國防的不實訊息
+    2. 對台說法比對：官媒在推 + 台灣端出現量暴增（analyzer/narratives.py）
+    """
+    SCRAPER = "all"
+    ATYPE   = "COG_WAR_SPIKE"
+    FC_HIGH = 3
+    FC_CRIT = 6
 
-    history = _get_daily_cog_war_ratio(days=14)
-    if len(history) < 3:
-        return None
+    fc_items = get_cog_war_news(hours=24)
+    fc_count = len(fc_items)
+    try:
+        from analyzer.narratives import scan_narratives
+        signals = [n for n in scan_narratives() if n["signal"]]
+    except Exception as e:
+        print(f"[ANOMALY] 說法比對跳過：{e}")
+        signals = []
 
-    today_news  = get_recent_news(hours=24)
-    total       = len(today_news)
-    if total < 5:
-        return None
-
-    cog_today   = sum(1 for n in today_news
-                      if n.content and "[COG_WAR:True" in n.content)
-    today_ratio = cog_today / total
-    stats       = _rolling_stats(history)
-    baseline    = stats["mean"]
-    if baseline == 0:
-        return None
-
-    deviation_pct = ((today_ratio - baseline) / baseline) * 100
-
-    if today_ratio >= CRIT_ABS and today_ratio >= baseline * CRIT_MULT:
-        severity = SEV_CRITICAL
-        desc = (f"認知作戰比例緊急異常：今日 {today_ratio:.1%}，"
-                f"14日均值 {baseline:.1%}，偏離 +{deviation_pct:.0f}%（{cog_today}/{total} 篇）")
-    elif today_ratio >= WARN_ABS and today_ratio >= baseline * WARN_MULT:
-        severity = SEV_HIGH
-        desc = (f"認知作戰比例異常：今日 {today_ratio:.1%}，"
-                f"14日均值 {baseline:.1%}，偏離 +{deviation_pct:.0f}%（{cog_today}/{total} 篇）")
-    else:
+    if fc_count < FC_HIGH and not signals:
         resolve_anomalies_by_type(SCRAPER, ATYPE)
         return None
 
-    if has_recent_anomaly(SCRAPER, ATYPE, hours=4):
+    if has_recent_anomaly(SCRAPER, ATYPE, hours=6):
         return None
 
-    ratio_txt   = round(1 / today_ratio) if today_ratio > 0 else "?"
-    explanation = (
-        f"什麼意思：\n"
-        f"今天每 {ratio_txt} 篇軍事新聞中就有 1 篇帶有統戰或假訊息特徵，\n"
-        f"{'比過去兩週平均高出 ' + str(int(deviation_pct)) + '%' if deviation_pct > 0 else '與近兩週平均相當'}。\n"
-        f"認知作戰比例偏高常出現於軍事行動前的輿論準備期。"
-    )
+    severity = SEV_CRITICAL if (fc_count >= FC_CRIT or (fc_count >= FC_HIGH and signals)) else SEV_HIGH
+    parts = []
+    if fc_count >= FC_HIGH:
+        parts.append(f"查核機構 24h 確認 {fc_count} 則涉兩岸/國防不實訊息")
+    if signals:
+        parts.append("說法升溫：" + "、".join(n["name"] for n in signals[:3]))
+    desc = "認知作戰升溫 — " + "；".join(parts)
 
-    aid = insert_anomaly(SCRAPER, ATYPE, severity,
-                         today_ratio, baseline, deviation_pct, desc)
+    lines = ["什麼意思："]
+    if fc_count >= FC_HIGH:
+        lines.append(f"事實查核機構近 24 小時確認 {fc_count} 則與兩岸、國防相關的不實訊息：")
+        for n in fc_items[:3]:
+            lines.append(f"• {(n.title or '')[:40]}")
+    for n in signals[:3]:
+        lines.append(f"「{n['name']}」：官媒近 3 日 {n['cn_3d']} 則，"
+                     f"台灣討論 24h {n['tw_24h']} 則（平常日均 {n['tw_baseline']}）")
+    lines.append("查核結果來自台灣事實查核中心、MyGoPen；說法熱度為關鍵字統計，不代表個別文章或發文者立場。")
+    explanation = "\n".join(lines)
+
+    aid = insert_anomaly(SCRAPER, ATYPE, severity, float(fc_count), 0.0, 0.0, desc)
     return {"id": aid, "type": ATYPE, "severity": severity,
             "desc": desc, "explanation": explanation}
 
