@@ -82,6 +82,7 @@ def print_system_info():
         ("態勢地圖",    "maps/map_generator.py",       "30分鐘",    "ADIZ/中線/電纜/軍機互動地圖"),
         ("擾臺解析",    "scrapers/mnd.py",             "即時",      "機型/數量/越中線/進入方向"),
         ("措辭分析",    "scrapers/china_media.py",     "每2小時",   "中共官媒L1/L2/L3升溫分類"),
+        ("認知作戰",    "factcheck + narratives",      "每3小時",   "事實查核機構結果＋對台說法比對（不用AI）"),
     ]
     for name, module, timing, desc in modules:
         print(f"  🔧 {name:<12} {timing:<12} {desc}")

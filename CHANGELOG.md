@@ -24,8 +24,14 @@
 - **活躍異常累積上千筆**：同一類型的異常每次觸發都新增一筆、從不解除（電纜異常累積 1206 筆）。改為新紀錄取代同類舊紀錄，舊資料會在下次觸發時自動清掉。
 
 ### 新增
+- **認知作戰重新設計（不用 AI）**：原本由 AI 逐則判斷，2403 則新聞從未標出任何一則，判錯時也有公開指控媒體或網友的風險。改成兩種可查證的訊號：
+  - `scrapers/factcheck.py`：每 3 小時抓台灣事實查核中心、MyGoPen 的查核結果，只收「錯誤／誤導」等不實判定，且與兩岸、國防、選舉相關的項目。
+  - `analyzer/narratives.py`：15 組對台說法（疑美論、國軍不堪一擊、和平統一等）的關鍵字比對。中共官媒近 3 日有在推，**而且**台灣討論 24 小時內的出現量達平常的 2 倍以上，才算訊號。
+  - 警報條件：查核機構 24 小時內確認 3 則以上，或說法訊號成立。
+  - 日報列出查核結果並附原文連結；週報新增「認知作戰」統計（查核數量＋說法熱度）；Dashboard 的認知作戰卡片改成顯示查核結果。
+  - 只呈現查核機構的結果與說法熱度，不判定個別文章或發文者。
 - `OLLAMA_TIMEOUT`：Ollama 單次呼叫逾時（預設 180 秒），慢的硬體可以調高。
-- `CARTO_API_KEY`、`GEMINI_MODEL` 設定項。
+- `CARTO_API_KEY`、`GEMINI_MODEL`、`TELEGRAM_BOT_USERNAME` 設定項（`/start` 介紹不再寫死 Bot 帳號）。
 - `maps/cable_data.py`：電纜資料的單一來源，地圖、警報、卡片、爬蟲共用。
 - README 新增「硬體需求」與「地圖說明」。
 
@@ -39,4 +45,5 @@
 - `requirements.txt`：補上 `flask`、`playwright`；移除未使用的 `pandas`、`ollama`、`python-dateutil`、`pytz`、`py7zr`；版本改為下限，支援 Python 3.13。
 
 ### 移除
+- AI 認知作戰判斷（`batch_detect_cognitive_warfare`、`update_news_cog_war` 等），本機不再為此消耗資源。
 - 已停用的衛星 AI 分析程式，以及約 20 個未被呼叫的函式（如 `push_alerts`、`push_routine_status`、`make_cga_map` 等）。

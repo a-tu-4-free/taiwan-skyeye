@@ -36,6 +36,7 @@
 | 國際媒體 | USNI/The War Zone/BBC 等 RSS | 30 分鐘 |
 | 智庫分析 | ASPI/CSIS/DFRLab/RAND | 2 小時 |
 | PTT 軍武板 | PTT | 30 分鐘 |
+| 認知作戰 | 台灣事實查核中心、MyGoPen 查核結果＋官媒說法比對 | 3 小時 |
 | 衛星影像 | Google Maps Static API | 每日 |
 | 中國石油消耗 | Our World in Data | 每月 |
 
@@ -45,6 +46,7 @@
 
 - **威脅評分**：軍事 × 0.5 + 海域 × 0.3 + 資安 × 0.2，0-10 分制
 - **異常偵測**：8 種異常類型，偏離14日均值自動觸發
+- **認知作戰**：不用 AI。① 引用事實查核機構確認的涉兩岸／國防不實訊息；② 對台說法比對（官媒在推＋台灣討論量暴增才算訊號）。只呈現查核結果與說法熱度，不判定個別文章或發文者
 - **AI 研判**：Ollama 本地 LLM（gemma3，選用），Gemini 2.5 Flash-Lite 備援；皆無時改用規則評分
 - **趨勢圖表**：30日威脅趨勢、擾台月統計、三維雷達圖
 - **態勢地圖**：ADIZ、中線、電纜（示意路由＋故障點推估）、船隻、軍機互動地圖
@@ -115,6 +117,7 @@ cp .env.example .env
 # 必填
 TELEGRAM_BOT_TOKEN=你的Bot Token
 TELEGRAM_CHANNEL_ID=@你的頻道ID
+TELEGRAM_BOT_USERNAME=你的Bot帳號   # 不含 @，顯示在 /start 介紹
 
 # 選填（有才啟用對應功能）
 AISSTREAM_API_KEY=        # AIS 船隻追蹤
@@ -210,12 +213,14 @@ taiwan-defense-bot/
 │   ├── thinktank.py        # 智庫
 │   ├── ptt.py              # PTT 軍武板
 │   ├── satellite.py        # 衛星影像
+│   ├── factcheck.py        # 認知作戰：事實查核機構（TFC / MyGoPen）
 │   └── oil_monitor.py      # 中國石油消耗指標
 │
 ├── analyzer/               # 分析引擎
 │   ├── threat_score.py     # 威脅評分
 │   ├── anomaly_detector.py # 異常偵測
 │   ├── ollama_client.py    # 本地 AI
+│   ├── narratives.py       # 認知作戰：對台說法比對（關鍵字，不用 AI）
 │   └── trend.py            # 趨勢圖表
 │
 ├── bot/                    # Telegram Bot
@@ -265,6 +270,7 @@ taiwan-defense-bot/
 | 每 30 分鐘 | 完整爬蟲、ADS-B 軍機、PTT、國際媒體 |
 | 每 1 小時 | 國台辦、AI 評分 |
 | 每 2 小時 | AIS 船隻、中共官媒、智庫 |
+| 每 3 小時 | 認知作戰（事實查核機構）|
 | 每 4 小時 | 海底電纜 |
 | 每日 08:00 | 晨間概況推送 |
 | 每日 08:05 | 衛星影像（每日輪替一處基地）|

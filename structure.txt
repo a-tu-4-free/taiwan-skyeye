@@ -13,6 +13,7 @@ taiwan-defense-bot/
 │   ├── gov_tw.py             # 外交部
 │   ├── cable_monitor.py      # 海底電纜（MODA 障礙表解析 + 自動判定已修復）
 │   ├── satellite.py          # 衛星影像（Google Maps，不做 AI 判讀）
+│   ├── factcheck.py          # 認知作戰：事實查核機構（TFC / MyGoPen）
 │   ├── thinktank.py          # 智庫監控
 │   ├── ais.py                # AIS 船隻 + 民船徵用偵測 ★新增
 │   ├── adsb_monitor.py       # ADS-B 軍機監控（OpenSky）★新增
@@ -25,6 +26,7 @@ taiwan-defense-bot/
 │
 ├── analyzer/
 │   ├── ollama_client.py      # 本地 AI（預設 gemma3:12b，.env 可換）
+│   ├── narratives.py         # 認知作戰：對台說法比對（關鍵字，不用 AI）
 │   ├── threat_score.py       # 台海相關性過濾 + 異常加分
 │   └── anomaly_detector.py   # 8種異常偵測 + 白話說明 ★重寫
 │

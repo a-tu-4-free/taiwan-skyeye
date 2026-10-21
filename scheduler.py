@@ -169,7 +169,6 @@ async def task_anomaly_check(bot: Bot, scheduler: AsyncIOScheduler):
                     "ptt_surge":         "ptt_realtime",
                     "intl_coverage_spike": "intl_news",
                     "gwytb_escalation":  "gwytb_check",
-                    "cog_war_spike":     "analyze_news",
                 }
                 job_id = SCRAPER_MAP.get(anomaly.get("type", "").lower())
                 if job_id:
@@ -335,15 +334,14 @@ async def task_gwytb_check(bot: Bot = None):
 
 async def task_analyze_news():
     """
-    【60分鐘】AI評分 + 批次認知作戰偵測
-    改用規則前置過濾 + batch_detect，大幅減少 Ollama 呼叫
+    【60分鐘】新聞威脅評分（規則前置過濾，分數夠高才送 Ollama）
+    認知作戰改由 task_factcheck + analyzer/narratives.py 處理，不再用 AI 判斷
     """
-    print(f"[SCHED] {datetime.now().strftime('%H:%M')} AI評分+認知作戰...")
+    print(f"[SCHED] {datetime.now().strftime('%H:%M')} AI評分...")
     try:
-        from database.db import get_recent_news, update_news_ai_data, update_news_cog_war
+        from database.db import get_recent_news, update_news_ai_data
         from analyzer.ollama_client import (
-            analyze_news_threat, batch_detect_cognitive_warfare,
-            check_ollama_available, rule_based_score
+            analyze_news_threat, check_ollama_available, rule_based_score
         )
         recent   = get_recent_news(hours=2)
         unscored = [n for n in recent if (n.threat_score or 0) == 0.0]
@@ -375,19 +373,6 @@ async def task_analyze_news():
             await asyncio.sleep(1)
 
         print(f"[SCHED] AI評分完成：AI呼叫 {ai_called} 次，規則跳過 {skipped} 次")
-
-        # 批次認知作戰偵測（單次 Ollama 呼叫取代多次）
-        high_score_news = [n for n in recent if (n.threat_score or 0) >= 3.0]
-        if high_score_news:
-            cog_results = await asyncio.to_thread(batch_detect_cognitive_warfare, high_score_news)
-            for news_id, cog in cog_results.items():
-                if cog.get("is_cog_war") and cog.get("confidence", 0) >= 75:
-                    update_news_cog_war(
-                        news_id,
-                        cog["is_cog_war"],
-                        cog["confidence"],
-                        cog.get("indicators", [])
-                    )
 
     except Exception as e:
         logger.error(f"[SCHED ERROR] AI評分: {e}")
@@ -592,6 +577,15 @@ async def _push_cmedia_alert(bot, articles: list, score: float, level: int):
         )
     except Exception as e:
         print(f"[SCHED] 中共官媒推送失敗：{e}")
+
+
+async def task_factcheck():
+    """【每3小時】認知作戰：事實查核機構（MyGoPen / TFC），只存資料，警報由異常偵測判斷"""
+    try:
+        from scrapers.factcheck import run as fc_run
+        await asyncio.to_thread(fc_run)
+    except Exception as e:
+        logger.error(f"[SCHED ERROR] 事實查核: {e}")
 
 
 async def task_thinktank(bot=None):
@@ -803,6 +797,15 @@ async def task_weekly_report(bot: Bot):
             "peak_score":       peak.overall_score if peak else 0,
             "key_events":       "詳見每日日報",
         }
+        # 認知作戰週統計（查核機構 + 說法熱度，不用 AI）
+        try:
+            from database.db import get_cog_war_news
+            from analyzer.narratives import weekly_narrative_summary
+            weekly_data["cog_war_count"]  = len(get_cog_war_news(hours=24 * 7))
+            weekly_data["cog_war_top"]    = [n.title for n in get_cog_war_news(hours=24 * 7)[:3]]
+            weekly_data["narratives"]     = weekly_narrative_summary()[:5]
+        except Exception as e:
+            logger.warning(f"[SCHED] 週報認知作戰統計跳過：{e}")
 
         ai_weekly = (await asyncio.to_thread(generate_weekly_report, weekly_data)) if check_ollama_available() else ""
         msg = format_weekly_report(weekly_data, ai_weekly)
@@ -943,6 +946,13 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="china_media", name="中共官媒監控",
         args=[bot], max_instances=1, coalesce=True
     )
+    # 認知作戰：事實查核機構（每3小時）
+    scheduler.add_job(
+        task_factcheck,
+        IntervalTrigger(hours=3),
+        id="factcheck", name="認知作戰（事實查核）",
+        max_instances=1, coalesce=True
+    )
     scheduler.add_job(
         task_thinktank,
         IntervalTrigger(hours=2),
@@ -1048,7 +1058,7 @@ def print_schedule(scheduler: AsyncIOScheduler):
         "🟡 高頻層":   ["intl_news"],
         "🟢 標準層":   ["ptt_realtime", "scrape_all", "gwytb_check",
                         "analyze_news", "cable_monitor", "adsb_monitor"],
-        "⚪ 低頻層":   ["ais_scrape", "china_media", "thinktank"],
+        "⚪ 低頻層":   ["ais_scrape", "china_media", "factcheck", "thinktank"],
         "📅 每日任務": ["morning_brief", "satellite", "update_map_am", "update_map_pm",
                         "realtime_map", "daily_scoring", "daily_report"],
         "🗓️ 每月任務": ["oil_monitor"],
